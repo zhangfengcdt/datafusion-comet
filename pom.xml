@@ -189,6 +189,19 @@ under the License.
         <version>${arrow.version}</version>
       </dependency>
 
+      <dependency>
+        <groupId>org.apache.sedona</groupId>
+        <artifactId>sedona-sql-3.4_2.12</artifactId>
+        <version>1.6.1</version>
+        <scope>test</scope>
+        <exclusions>
+          <exclusion>
+            <groupId>org.apache.spark</groupId>
+            <artifactId>*</artifactId>
+          </exclusion>
+        </exclusions>
+      </dependency>
+
       <!-- Parquet dependencies -->
       <dependency>
         <groupId>org.apache.parquet</groupId>
