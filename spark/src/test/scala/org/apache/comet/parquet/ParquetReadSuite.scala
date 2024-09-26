@@ -1381,12 +1381,32 @@ class ParquetReadV2Suite extends ParquetReadSuite with AdaptiveSparkPlanHelper {
 
     val objects_df = spark.read
       .format("parquet")
-      .load("/Users/feng/github/geoparquet/examples/sample_parquet_with_struct_array.parquet")
+      .load(
+        "/Users/feng/github/geoparquet/examples/geometry_parquet_with_places_and_type.parquet")
 
     objects_df.createOrReplaceTempView("samples")
     objects_df.printSchema()
+//    objects_df.show()
 
-    val df = spark.sql("select element_at(skills, 2) from samples")
+    val df = spark.sql("""
+    SELECT
+        place_name,
+        rating,
+        geometry_type,
+        point.x,
+        point.y,
+        point.z,
+        point.m
+    FROM (
+        SELECT
+            place_name,
+            rating,
+            geometry_type,
+            element_at(element_at(element_at(geometry, 1), 1), 1) AS point
+        FROM samples
+    )
+""")
+
     df.show()
     df.explain()
   }
