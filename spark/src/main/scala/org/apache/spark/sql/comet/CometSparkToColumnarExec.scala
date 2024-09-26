@@ -30,8 +30,8 @@ import org.apache.spark.sql.execution.{RowToColumnarTransition, SparkPlan}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.vectorized.ColumnarBatch
+
 import org.apache.comet.DataTypeSupport
-import org.apache.spark.sql.sedona_sql.UDT.GeometryUDT
 
 case class CometSparkToColumnarExec(child: SparkPlan)
     extends RowToColumnarTransition
@@ -113,7 +113,6 @@ object CometSparkToColumnarExec extends DataTypeSupport {
     case _: StructType => true
     case _: ArrayType => true
     case _: MapType => true
-    case _: GeometryUDT => true
     case _ => false
   }
 }

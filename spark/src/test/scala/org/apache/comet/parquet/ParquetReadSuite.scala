@@ -22,10 +22,13 @@ package org.apache.comet.parquet
 import java.io.{File, FileFilter}
 import java.math.BigDecimal
 import java.time.{ZoneId, ZoneOffset}
+
 import scala.reflect.ClassTag
 import scala.reflect.runtime.universe.TypeTag
+
 import org.scalactic.source.Position
 import org.scalatest.Tag
+
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.example.data.simple.SimpleGroup
@@ -40,12 +43,11 @@ import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
+
 import com.google.common.primitives.UnsignedLong
+
 import org.apache.comet.CometConf
 import org.apache.comet.CometSparkSessionExtensions.{isSpark34Plus, isSpark40Plus}
-import org.apache.sedona.core.formatMapper.shapefileParser.ShapefileReader
-import org.apache.sedona.spark.SedonaContext
-import org.apache.sedona.sql.utils.Adapter
 
 abstract class ParquetReadSuite extends CometTestBase {
   import testImplicits._
@@ -1375,19 +1377,17 @@ class ParquetReadV2Suite extends ParquetReadSuite with AdaptiveSparkPlanHelper {
   }
 
   test("Test Sedona Integration") {
-    val sedona = SedonaContext.create(spark)
     spark.conf.set("spark.comet.convert.parquet.enabled", true)
 
-    val objects_df = sedona.read.format("geoparquet").load("/Users/feng/github/geoparquet/examples/example.parquet")
-//    val objects_df = sedona.read.format("parquet").load("/Users/feng/github/geoparquet/examples/sample_parquet_with_struct_array.parquet")
+    val objects_df = spark.read
+      .format("parquet")
+      .load("/Users/feng/github/geoparquet/examples/sample_parquet_with_struct_array.parquet")
+
     objects_df.createOrReplaceTempView("samples")
     objects_df.printSchema()
 
-//    val df = sedona.sql("select pop_est + 1 from samples")
-//    val df = sedona.sql("select bbox.xmax from samples")
-    val df = sedona.sql("select ST_GeometryType(geometry) from samples")
-//      val df = sedona.sql("select element_at(skills, 2) from samples")
-//      df.show()
-      df.explain()
+    val df = spark.sql("select element_at(skills, 2) from samples")
+    df.show()
+    df.explain()
   }
 }

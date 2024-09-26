@@ -20,6 +20,7 @@
 package org.apache.comet.serde
 
 import scala.collection.JavaConverters._
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, Average, BitAndAgg, BitOrAgg, BitXorAgg, Complete, Corr, Count, CovPopulation, CovSample, Final, First, Last, Max, Min, Partial, StddevPop, StddevSamp, Sum, VariancePop, VarianceSamp}
@@ -40,6 +41,7 @@ import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
+
 import org.apache.comet.CometConf
 import org.apache.comet.CometSparkSessionExtensions.{isCometScan, isSpark34Plus, withInfo}
 import org.apache.comet.expressions.{CometCast, CometEvalMode, Compatible, Incompatible, RegExp, Unsupported}
@@ -48,7 +50,6 @@ import org.apache.comet.serde.ExprOuterClass.DataType.{DataTypeInfo, DecimalInfo
 import org.apache.comet.serde.OperatorOuterClass.{AggregateMode => CometAggregateMode, BuildSide, JoinType, Operator}
 import org.apache.comet.shims.CometExprShim
 import org.apache.comet.shims.ShimQueryPlanSerde
-import org.apache.spark.sql.sedona_sql.UDT.GeometryUDT
 
 /**
  * An utility object for query plan and expression serialization.
@@ -68,8 +69,6 @@ object QueryPlanSerde extends Logging with ShimQueryPlanSerde with CometExprShim
       s.fields.map(_.dataType).forall(supportedDataType(_, allowStruct))
     case a: ArrayType if allowStruct =>
       supportedDataType(a.elementType, allowStruct)
-    case g: GeometryUDT if allowStruct =>
-      true
     case dt =>
       emitWarning(s"unsupported Spark data type: $dt")
       false
@@ -99,7 +98,6 @@ object QueryPlanSerde extends Logging with ShimQueryPlanSerde with CometExprShim
       case _: ArrayType => 14
       case _: MapType => 15
       case _: StructType => 16
-      case _: GeometryUDT => 17
       case dt =>
         emitWarning(s"Cannot serialize Spark data type: $dt")
         return None
@@ -171,13 +169,6 @@ object QueryPlanSerde extends Logging with ShimQueryPlanSerde with CometExprShim
 
         info.setStruct(struct)
         builder.setTypeInfo(info.build()).build()
-
-      case g: GeometryUDT =>
-        val info = DataTypeInfo.newBuilder()
-        info.setGeom(ExprOuterClass.GeometryInfo.newBuilder().build())
-
-        builder.build()
-
       case _ => builder.build()
     }
 
