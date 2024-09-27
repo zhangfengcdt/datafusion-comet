@@ -43,7 +43,7 @@ import org.apache.comet.CometSparkSessionExtensions.{isSpark33Plus, isSpark34Plu
 class CometExpressionSuite extends CometTestBase with AdaptiveSparkPlanHelper {
   import testImplicits._
 
-  // Define the UDF to calculate the envelope (bounding box)
+  // Define the UDF to calculate the envelope and return an Envelope case class
   val st_envelope: UserDefinedFunction = functions.udf((geometry: Seq[Seq[Seq[Row]]]) => {
     val coordinates = geometry.flatten.flatten // Flatten the nested arrays of coordinates
 
@@ -55,7 +55,7 @@ class CometExpressionSuite extends CometTestBase with AdaptiveSparkPlanHelper {
     val minY = ys.min
     val maxY = ys.max
 
-    // Return the envelope as (minX, minY, maxX, maxY)
+    // Return an instance of the Envelope case class
     (minX, minY, maxX, maxY)
   })
 
@@ -93,7 +93,7 @@ class CometExpressionSuite extends CometTestBase with AdaptiveSparkPlanHelper {
     'Central Park',
     struct('Park', 'New York'),
     4.7,
-    array(array(array(named_struct('x', 40.785091, 'y', -73.968285, 'z', 10.0, 'm', null)))),
+    array(array(array(named_struct('x', 40.785091, 'y', -73.968285, 'z', 10.0, 'm', 0.0)))),
     'Polygon'
   )
 """)
@@ -113,7 +113,7 @@ class CometExpressionSuite extends CometTestBase with AdaptiveSparkPlanHelper {
     'Space Needle',
     struct('Landmark', 'Seattle'),
     4.8,
-    array(array(array(named_struct('x', 47.620422, 'y', -122.349358, 'z', 184.0, 'm', null)))),
+    array(array(array(named_struct('x', 47.620422, 'y', -122.349358, 'z', 184.0, 'm', 0.0)))),
     'Point'
   )
 """)
@@ -131,7 +131,8 @@ class CometExpressionSuite extends CometTestBase with AdaptiveSparkPlanHelper {
 
       // custom udf (unsupported)
       val df3 =
-        sql(s"select envelope._1 from (SELECT st_envelope(geometry) AS envelope from $table)")
+        sql(
+          s"select envelope._1, envelope._2, envelope._3, envelope._4 from (SELECT st_envelope(geometry) AS envelope from $table)")
       df3.explain(false)
 
       df3.show()

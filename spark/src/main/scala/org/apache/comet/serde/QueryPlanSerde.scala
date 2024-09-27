@@ -880,7 +880,7 @@ object QueryPlanSerde extends Logging with ShimQueryPlanSerde with CometExprShim
 
           if (childExprs.forall(_.isDefined)) {
             val args = childExprs.map(_.get).map(Some(_))
-            val optExpr = scalarExprToProtoWithReturnType(udfName.get, DateType, args: _*)
+            val optExpr = scalarExprToProtoWithReturnType(udfName.get, u.dataType, args: _*)
             optExprWithInfo(optExpr, u, children: _*)
           } else {
             withInfo(u, children: _*)
