@@ -19,6 +19,7 @@
 
 package org.apache.comet
 
+import java.nio.file.{Files, Paths}
 import java.time.{Duration, Period}
 
 import scala.reflect.ClassTag
@@ -26,11 +27,12 @@ import scala.reflect.runtime.universe.TypeTag
 import scala.util.Random
 
 import org.apache.hadoop.fs.Path
-import org.apache.spark.sql.{CometTestBase, DataFrame, Row}
+import org.apache.spark.sql.{functions, CometTestBase, DataFrame, Row}
 import org.apache.spark.sql.catalyst.optimizer.SimplifyExtractValueOps
 import org.apache.spark.sql.comet.CometProjectExec
 import org.apache.spark.sql.execution.{ColumnarToRowExec, InputAdapter, WholeStageCodegenExec}
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
+import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.SESSION_LOCAL_TIMEZONE
@@ -40,6 +42,102 @@ import org.apache.comet.CometSparkSessionExtensions.{isSpark33Plus, isSpark34Plu
 
 class CometExpressionSuite extends CometTestBase with AdaptiveSparkPlanHelper {
   import testImplicits._
+
+  // Define the UDF to calculate the envelope (bounding box)
+  val st_envelope: UserDefinedFunction = functions.udf((geometry: Seq[Seq[Seq[Row]]]) => {
+    val coordinates = geometry.flatten.flatten // Flatten the nested arrays of coordinates
+
+    val xs = coordinates.map(_.getAs[Double]("x"))
+    val ys = coordinates.map(_.getAs[Double]("y"))
+
+    val minX = xs.min
+    val maxX = xs.max
+    val minY = ys.min
+    val maxY = ys.max
+
+    // Return the envelope as (minX, minY, maxX, maxY)
+    (minX, minY, maxX, maxY)
+  })
+
+  test("basic udf support") {
+    spark.conf.set("spark.comet.convert.parquet.enabled", true)
+    val table = "test"
+    val tableLocation = s"/Users/feng/github/datafusion-comet/spark-warehouse/$table"
+    withTable(table) {
+      // Drop the table if it exists
+      sql(s"DROP TABLE IF EXISTS $table")
+
+      // Remove the directory if it still exists
+      val path = Paths.get(tableLocation)
+      if (Files.exists(path)) {
+        import scala.reflect.io.Directory
+        val directory = new Directory(new java.io.File(tableLocation))
+        directory.deleteRecursively() // Delete the existing directory
+      }
+
+      // Create a table with a nested geometry column (array<array<array<struct<x: double, y: double, z: double, m: double>>>)
+      sql(s"""
+  CREATE TABLE $table (
+    place_name STRING,
+    place_info STRUCT<type: STRING, city: STRING>,
+    rating DOUBLE,
+    geometry ARRAY<ARRAY<ARRAY<STRUCT<x: DOUBLE, y: DOUBLE, z: DOUBLE, m: DOUBLE>>>>,
+    geometry_type STRING
+  )
+  USING PARQUET
+""")
+
+      // Insert some values into the table
+      sql(s"""
+  INSERT INTO $table VALUES (
+    'Central Park',
+    struct('Park', 'New York'),
+    4.7,
+    array(array(array(named_struct('x', 40.785091, 'y', -73.968285, 'z', 10.0, 'm', null)))),
+    'Polygon'
+  )
+""")
+
+      sql(s"""
+  INSERT INTO $table VALUES (
+    'Golden Gate Bridge',
+    struct('Bridge', 'San Francisco'),
+    4.9,
+    array(array(array(named_struct('x', 37.8199286, 'y', -122.4782551, 'z', 75.0, 'm', 20.0)))),
+    'Line'
+  )
+""")
+
+      sql(s"""
+  INSERT INTO $table VALUES (
+    'Space Needle',
+    struct('Landmark', 'Seattle'),
+    4.8,
+    array(array(array(named_struct('x', 47.620422, 'y', -122.349358, 'z', 184.0, 'm', null)))),
+    'Point'
+  )
+""")
+
+      // Register the UDF with Spark
+      spark.udf.register("st_envelope", st_envelope)
+
+//      // supported expression, should see "CometProject"
+//      val df1 = sql(s"SELECT acos(rating) from $table")
+//      df1.explain(false)
+
+//      // supported expression, should see "Project"
+//      val df2 = sql(s"SELECT acosh(rating) from $table")
+//      df2.explain(false)
+
+      // custom udf (unsupported)
+      val df3 =
+        sql(s"select envelope._1 from (SELECT st_envelope(geometry) AS envelope from $table)")
+      df3.explain(false)
+
+      df3.show()
+
+    }
+  }
 
   test("compare true/false to negative zero") {
     Seq(false, true).foreach { dictionary =>
