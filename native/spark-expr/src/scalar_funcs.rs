@@ -79,6 +79,7 @@ macro_rules! downcast_compute_op {
     }};
 }
 
+
 pub fn spark_st_envelope(
     args: &[ColumnarValue],
     data_type: &DataType,
@@ -125,27 +126,33 @@ pub fn spark_st_envelope(
         let array_of_arrays = array_of_arrays_ref.as_any().downcast_ref::<ListArray>().unwrap();
 
         for j in 0..array_of_arrays.len() {
-            let struct_array_ref = array_of_arrays.value(j);
-            let struct_array = struct_array_ref.as_any().downcast_ref::<StructArray>().unwrap();
-            let x_array = struct_array.column(0).as_any().downcast_ref::<Float64Array>().unwrap();
-            let y_array = struct_array.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+            let array_array_ref = array_of_arrays.value(j);
+            let array_of_arrays_arrays = array_array_ref.as_any().downcast_ref::<ListArray>().unwrap();
 
-            // Find the min and max values of x and y
-            for k in 0..x_array.len() {
-                let x = x_array.value(k);
-                let y = y_array.value(k);
+            for k in 0..array_of_arrays_arrays.len() {
+                let array_array_array_ref = array_of_arrays_arrays.value(k);
+                let struct_array = array_array_array_ref.as_any().downcast_ref::<StructArray>().unwrap();
 
-                if x < min_x {
-                    min_x = x;
-                }
-                if x > max_x {
-                    max_x = x;
-                }
-                if y < min_y {
-                    min_y = y;
-                }
-                if y > max_y {
-                    max_y = y;
+                let x_array = struct_array.column(0).as_any().downcast_ref::<Float64Array>().unwrap();
+                let y_array = struct_array.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+
+                // Find the min and max values of x and y
+                for k in 0..x_array.len() {
+                    let x = x_array.value(k);
+                    let y = y_array.value(k);
+
+                    if x < min_x {
+                        min_x = x;
+                    }
+                    if x > max_x {
+                        max_x = x;
+                    }
+                    if y < min_y {
+                        min_y = y;
+                    }
+                    if y > max_y {
+                        max_y = y;
+                    }
                 }
             }
         }
