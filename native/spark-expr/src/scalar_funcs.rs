@@ -87,10 +87,10 @@ pub fn spark_st_envelope(
     // Ensure that the data_type is a struct with fields minX, minY, maxX, maxY, all of type Float64
     if let DataType::Struct(fields) = data_type {
         let expected_fields = vec![
-            Field::new("minX", DataType::Float64, false),
-            Field::new("minY", DataType::Float64, false),
-            Field::new("maxX", DataType::Float64, false),
-            Field::new("maxY", DataType::Float64, false),
+            Field::new("_1", DataType::Float64, false),
+            Field::new("_2", DataType::Float64, false),
+            Field::new("_3", DataType::Float64, false),
+            Field::new("_4", DataType::Float64, false),
         ];
 
         if fields.len() != expected_fields.len()
@@ -129,41 +129,16 @@ pub fn spark_st_envelope(
             let array_array_ref = array_of_arrays.value(j);
             let array_of_arrays_arrays = array_array_ref.as_any().downcast_ref::<ListArray>().unwrap();
 
-            for k in 0..array_of_arrays_arrays.len() {
-                let array_array_array_ref = array_of_arrays_arrays.value(k);
-                let struct_array = array_array_array_ref.as_any().downcast_ref::<StructArray>().unwrap();
-
-                let x_array = struct_array.column(0).as_any().downcast_ref::<Float64Array>().unwrap();
-                let y_array = struct_array.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
-
-                // Find the min and max values of x and y
-                for k in 0..x_array.len() {
-                    let x = x_array.value(k);
-                    let y = y_array.value(k);
-
-                    if x < min_x {
-                        min_x = x;
-                    }
-                    if x > max_x {
-                        max_x = x;
-                    }
-                    if y < min_y {
-                        min_y = y;
-                    }
-                    if y > max_y {
-                        max_y = y;
-                    }
-                }
-            }
+            cal_envelope(&mut min_x, &mut max_x, &mut min_y, &mut max_y, array_of_arrays_arrays);
         }
     }
 
     // Define the fields for the envelope struct (minX, minY, maxX, maxY)
     let envelope_fields = vec![
-        Field::new("minX", DataType::Float64, false),
-        Field::new("minY", DataType::Float64, false),
-        Field::new("maxX", DataType::Float64, false),
-        Field::new("maxY", DataType::Float64, false),
+        Field::new("_1", DataType::Float64, false),
+        Field::new("_2", DataType::Float64, false),
+        Field::new("_3", DataType::Float64, false),
+        Field::new("_4", DataType::Float64, false),
     ];
 
     // Create the builders for each field in the struct
@@ -195,6 +170,35 @@ pub fn spark_st_envelope(
 
     // Return the result as a ColumnarValue with the envelope struct
     Ok(ColumnarValue::Array(Arc::new(struct_array)))
+}
+
+fn cal_envelope(min_x: &mut f64, max_x: &mut f64, min_y: &mut f64, max_y: &mut f64, array_of_arrays_arrays: &ListArray) {
+    for k in 0..array_of_arrays_arrays.len() {
+        let array_array_array_ref = array_of_arrays_arrays.value(k);
+        let struct_array = array_array_array_ref.as_any().downcast_ref::<StructArray>().unwrap();
+
+        let x_array = struct_array.column(0).as_any().downcast_ref::<Float64Array>().unwrap();
+        let y_array = struct_array.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        // Find the min and max values of x and y
+        for k in 0..x_array.len() {
+            let x = x_array.value(k);
+            let y = y_array.value(k);
+
+            if x < *min_x {
+                *min_x = x;
+            }
+            if x > *max_x {
+                *max_x = x;
+            }
+            if y < *min_y {
+                *min_y = y;
+            }
+            if y > *max_y {
+                *max_y = y;
+            }
+        }
+    }
 }
 
 /// `ceil` function that simulates Spark `ceil` expression
@@ -765,10 +769,10 @@ mod tests {
 
         // Define the expected data type for the envelope struct
         let envelope_data_type = DataType::Struct(vec![
-            Field::new("minX", DataType::Float64, false),
-            Field::new("minY", DataType::Float64, false),
-            Field::new("maxX", DataType::Float64, false),
-            Field::new("maxY", DataType::Float64, false),
+            Field::new("_1", DataType::Float64, false),
+            Field::new("_2", DataType::Float64, false),
+            Field::new("_3", DataType::Float64, false),
+            Field::new("_4", DataType::Float64, false),
         ].into());
 
         // Call the spark_st_envelope function
