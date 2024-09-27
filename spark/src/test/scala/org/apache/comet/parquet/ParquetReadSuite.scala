@@ -34,13 +34,12 @@ import org.apache.hadoop.fs.Path
 import org.apache.parquet.example.data.simple.SimpleGroup
 import org.apache.parquet.schema.MessageTypeParser
 import org.apache.spark.SparkException
-import org.apache.spark.sql.{functions, CometTestBase, DataFrame, Row}
+import org.apache.spark.sql.{CometTestBase, DataFrame, Row}
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.comet.CometBatchScanExec
 import org.apache.spark.sql.comet.CometScanExec
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
-import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
@@ -1375,65 +1374,5 @@ class ParquetReadV2Suite extends ParquetReadSuite with AdaptiveSparkPlanHelper {
       case (cometEnabled, expectedScanner) =>
         testScanner(cometEnabled, scanner = expectedScanner, v1 = None)
     }
-  }
-
-  test("Test Sedona Integration") {
-    spark.conf.set("spark.comet.convert.parquet.enabled", true)
-
-    // Define the UDF to calculate the envelope (bounding box)
-    val st_envelope: UserDefinedFunction = functions.udf((geometry: Seq[Seq[Seq[Row]]]) => {
-      val coordinates = geometry.flatten.flatten // Flatten the nested arrays of coordinates
-
-      val xs = coordinates.map(_.getAs[Double]("x"))
-      val ys = coordinates.map(_.getAs[Double]("y"))
-
-      val minX = xs.min
-      val maxX = xs.max
-      val minY = ys.min
-      val maxY = ys.max
-
-      // Return the envelope as (minX, minY, maxX, maxY)
-      (minX, minY, maxX, maxY)
-    })
-
-    // Register the UDF with Spark
-    spark.udf.register("st_envelope", st_envelope)
-
-    val objects_df = spark.read
-      .format("parquet")
-      .load(
-        "/Users/feng/github/geoparquet/examples/geometry_parquet_with_places_and_type.parquet")
-
-    objects_df.createOrReplaceTempView("samples")
-    objects_df.printSchema()
-//    objects_df.show()
-
-    val df = spark.sql("""
-    SELECT
-        place_name
-        -- rating,
-        -- geometry_type,
-        -- point.x,
-        -- point.y,
-        -- point.z,
-        -- point.m,
-        -- envelope._1 AS minX,
-        -- envelope._2 AS minY,
-        -- envelope._3 AS maxX,
-        -- envelope._4 AS maxY
-    FROM (
-        SELECT
-            place_name,
-            rating,
-            geometry_type,
-            element_at(element_at(element_at(geometry, 1), 1), 1) AS point
-            -- st_envelope(geometry) AS envelope
-        FROM samples
-    )
-""")
-
-    df.explain()
-    df.printSchema()
-    df.show()
   }
 }
