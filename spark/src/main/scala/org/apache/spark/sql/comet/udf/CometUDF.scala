@@ -21,33 +21,41 @@ package org.apache.spark.sql.comet.udf
 
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.api.java.UDF1
+import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.sql.functions.udf
-import org.apache.spark.sql.types.DataTypes
+import org.apache.spark.sql.types.{DataTypes, StructField}
 
 class CometUDF {
+
+  private val GEOM_ENVELOPE_FIELD: Array[StructField] = Array(
+    DataTypes.createStructField("minX", DataTypes.DoubleType, false),
+    DataTypes.createStructField("minY", DataTypes.DoubleType, false),
+    DataTypes.createStructField("maxX", DataTypes.DoubleType, false),
+    DataTypes.createStructField("maxY", DataTypes.DoubleType, false))
+
+  private val GEOM_ENVELOPE_FIELD2: Array[StructField] = Array(
+    DataTypes.createStructField("minX", DataTypes.DoubleType, false),
+    DataTypes.createStructField("minY", DataTypes.DoubleType, false))
 
   /**
    * This method takes a Row representing a geometry and returns a Row representing the envelope
    * (bounding box) of the geometry. The envelope is defined by the minimum and maximum X and Y
    * coordinates.
    *
+   * This is a stub implementation that returns an empty Row.
+   *
    * @param geometry
    *   A Row containing the geometry data.
    * @return
    *   A Row containing the minX, minY, maxX, and maxY values of the envelope.
    */
-  val st_envelope = udf(
-    new UDF1[Row, Row] {
-      override def call(geometry: Row): Row = {
-        Row(0.0, 0.0, 0.0, 0.0)
-      }
-    },
-    DataTypes.createStructType(
-      Array(
-        DataTypes.createStructField("minX", DataTypes.DoubleType, false),
-        DataTypes.createStructField("minY", DataTypes.DoubleType, false),
-        DataTypes.createStructField("maxX", DataTypes.DoubleType, false),
-        DataTypes.createStructField("maxY", DataTypes.DoubleType, false))))
+  val st_envelope: UserDefinedFunction = udf(
+    new UDF1[Row, Row] { override def call(geometry: Row): Row = Row.empty },
+    DataTypes.createStructType(GEOM_ENVELOPE_FIELD))
+
+  val st_envelope2: UserDefinedFunction = udf(
+    new UDF1[Row, Row] { override def call(geometry: Row): Row = Row.empty },
+    DataTypes.createStructType(GEOM_ENVELOPE_FIELD2))
 
   /**
    * Registers all UDFs defined in this class with the given SparkSession.
@@ -68,6 +76,7 @@ class CometUDF {
    *   The SparkSession to register the UDFs with.
    */
   def registerUDFs(spark: SparkSession): Unit = {
+    spark.udf.register("st_envelope", st_envelope2)
     spark.udf.register("st_envelope", st_envelope)
   }
 }
