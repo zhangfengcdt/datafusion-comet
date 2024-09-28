@@ -27,15 +27,55 @@ import org.apache.spark.sql.types.{DataTypes, StructField}
 
 class CometUDF {
 
-  private val GEOM_ENVELOPE_FIELD: Array[StructField] = Array(
+  private val COORDINATE: Array[StructField] = Array(
+    DataTypes.createStructField("x", DataTypes.DoubleType, false),
+    DataTypes.createStructField("y", DataTypes.DoubleType, false),
+    DataTypes.createStructField("z", DataTypes.DoubleType, false),
+    DataTypes.createStructField("m", DataTypes.DoubleType, false))
+
+  private val GEOMETRY: Array[StructField] = Array(
+    DataTypes.createStructField("type", DataTypes.StringType, false),
+    DataTypes.createStructField("point", DataTypes.createStructType(COORDINATE), false),
+    DataTypes.createStructField(
+      "multipoint",
+      DataTypes.createArrayType(DataTypes.createStructType(COORDINATE)),
+      false),
+    DataTypes.createStructField(
+      "linestring",
+      DataTypes.createArrayType(DataTypes.createStructType(COORDINATE)),
+      false),
+    DataTypes.createStructField(
+      "multilinestring",
+      DataTypes.createArrayType(
+        DataTypes.createArrayType(DataTypes.createStructType(COORDINATE))),
+      false),
+    DataTypes.createStructField(
+      "polygon",
+      DataTypes.createArrayType(
+        DataTypes.createArrayType(DataTypes.createStructType(COORDINATE))),
+      false),
+    DataTypes.createStructField(
+      "multipolygon",
+      DataTypes.createArrayType(
+        DataTypes.createArrayType(
+          DataTypes.createArrayType(DataTypes.createStructType(COORDINATE)))),
+      false))
+
+  private val GEOMETRY_ENVELOPE: Array[StructField] = Array(
     DataTypes.createStructField("minX", DataTypes.DoubleType, false),
     DataTypes.createStructField("minY", DataTypes.DoubleType, false),
     DataTypes.createStructField("maxX", DataTypes.DoubleType, false),
     DataTypes.createStructField("maxY", DataTypes.DoubleType, false))
 
-  private val GEOM_ENVELOPE_FIELD2: Array[StructField] = Array(
-    DataTypes.createStructField("minX", DataTypes.DoubleType, false),
-    DataTypes.createStructField("minY", DataTypes.DoubleType, false))
+  private val GEOMETRY_BOX: Array[StructField] = Array(
+    DataTypes.createStructField("xmin", DataTypes.DoubleType, false),
+    DataTypes.createStructField("ymin", DataTypes.DoubleType, false),
+    DataTypes.createStructField("zmin", DataTypes.DoubleType, false),
+    DataTypes.createStructField("mmin", DataTypes.DoubleType, false),
+    DataTypes.createStructField("xmax", DataTypes.DoubleType, false),
+    DataTypes.createStructField("ymax", DataTypes.DoubleType, false),
+    DataTypes.createStructField("zmax", DataTypes.DoubleType, false),
+    DataTypes.createStructField("mmax", DataTypes.DoubleType, false))
 
   /**
    * This method takes a Row representing a geometry and returns a Row representing the envelope
@@ -51,32 +91,45 @@ class CometUDF {
    */
   val st_envelope: UserDefinedFunction = udf(
     new UDF1[Row, Row] { override def call(geometry: Row): Row = Row.empty },
-    DataTypes.createStructType(GEOM_ENVELOPE_FIELD))
+    DataTypes.createStructType(GEOMETRY_ENVELOPE))
 
-  val st_envelope2: UserDefinedFunction = udf(
-    new UDF1[Row, Row] { override def call(geometry: Row): Row = Row.empty },
-    DataTypes.createStructType(GEOM_ENVELOPE_FIELD2))
+  val st_point: UserDefinedFunction = udf(
+    new UDF1[Unit, Row] { override def call(dummy: Unit): Row = Row.empty },
+    DataTypes.createStructType(GEOMETRY))
+
+  val st_multipoint: UserDefinedFunction = udf(
+    new UDF1[Unit, Row] { override def call(dummy: Unit): Row = Row.empty },
+    DataTypes.createStructType(GEOMETRY))
+
+  val st_linestring: UserDefinedFunction = udf(
+    new UDF1[Unit, Row] { override def call(dummy: Unit): Row = Row.empty },
+    DataTypes.createStructType(GEOMETRY))
+
+  val st_multilinestring: UserDefinedFunction = udf(
+    new UDF1[Unit, Row] { override def call(dummy: Unit): Row = Row.empty },
+    DataTypes.createStructType(GEOMETRY))
+
+  val st_polygon: UserDefinedFunction = udf(
+    new UDF1[Unit, Row] { override def call(dummy: Unit): Row = Row.empty },
+    DataTypes.createStructType(GEOMETRY))
+
+  val st_multipolygon: UserDefinedFunction = udf(
+    new UDF1[Unit, Row] { override def call(dummy: Unit): Row = Row.empty },
+    DataTypes.createStructType(GEOMETRY))
 
   /**
    * Registers all UDFs defined in this class with the given SparkSession.
-   *
-   * Example usage:
-   * {{{
-   *   val spark = SparkSession.builder()
-   *     .appName("CometUDFExample")
-   *     .master("local[*]")
-   *     .getOrCreate()
-   *
-   *   val cometUDF = new CometUDF()
-   *   cometUDF.registerUDFs(spark)
-   *
-   * }}}
    *
    * @param spark
    *   The SparkSession to register the UDFs with.
    */
   def registerUDFs(spark: SparkSession): Unit = {
-    spark.udf.register("st_envelope", st_envelope2)
+    spark.udf.register("st_point", st_point)
+    spark.udf.register("st_multipoint", st_multipoint)
+    spark.udf.register("st_linestring", st_linestring)
+    spark.udf.register("st_multilinestring", st_multilinestring)
+    spark.udf.register("st_polygon", st_polygon)
+    spark.udf.register("st_multipolygon", st_multipolygon)
     spark.udf.register("st_envelope", st_envelope)
   }
 }
