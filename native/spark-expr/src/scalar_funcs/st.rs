@@ -17,12 +17,13 @@
 
 use std::sync::Arc;
 use arrow_array::builder::{ArrayBuilder, Float64Builder, ListBuilder, StructBuilder};
-use arrow_array::{Array, Float64Array, ListArray, StructArray};
+use arrow_array::{Array, ListArray, StringArray, StructArray};
 use arrow_schema::{DataType, Field};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::DataFusionError;
 use crate::scalar_funcs::geometry_helpers::{
     get_coordinate_fields, get_geometry_fields,
+    build_geometry_envelope,
     build_geometry_point, build_geometry_linestring,
 };
 
@@ -122,10 +123,10 @@ pub fn spark_st_envelope(
         if fields.len() != expected_fields.len()
             || !fields.iter().zip(&expected_fields).all(|(f1, f2)| **f1 == *f2)
         {
-            // return Err(DataFusionError::Internal(
-            //     "Expected struct with fields (minX, minY, maxX, maxY) of type Float64".to_string(),
-            // ));
-            println!("Expected struct with fields (minX, minY, maxX, maxY) of type Float64");
+            return Err(DataFusionError::Internal(
+                "Expected struct with fields (xmin, ymin, xmax, ymax) of type Float64".to_string(),
+            ));
+            // println!("Expected struct with fields (minX, minY, maxX, maxY) of type Float64");
         }
     } else {
         return Err(DataFusionError::Internal(
@@ -134,20 +135,66 @@ pub fn spark_st_envelope(
     }
     let value = &args[0];
 
-    // Downcast to ListArray (which represents array<array<array<struct>>>)
-    let nested_array = match value {
-        ColumnarValue::Array(array) => array.as_any().downcast_ref::<ListArray>().unwrap(),
-        _ => return Err(DataFusionError::Internal("Expected array input".to_string())),
+    // Downcast to StructArray to check the "type" field
+    let struct_array = match value {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<StructArray>().unwrap(),
+        _ => return Err(DataFusionError::Internal("Expected struct input".to_string())),
     };
 
-    // Extract the innermost StructArray (struct<x: double, y: double, z: double, m: double>)
+    // Get the "type" field
+    let type_array = struct_array
+        .column_by_name("type")
+        .ok_or_else(|| DataFusionError::Internal("Missing 'type' field".to_string()))?
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+
+    // Check the geometry type
+    let geometry_type = type_array.value(0);
+
+    // Match the geometry type to different schemas and call geometry_envelope
+    match geometry_type {
+        "point" => {
+            // Handle point geometry
+            let nested_array = struct_array
+                .column_by_name("point")
+                .ok_or_else(|| DataFusionError::Internal("Missing 'point' field".to_string()))?
+                .as_any()
+                .downcast_ref::<ListArray>()
+                .unwrap();
+            process_geometry_envelope(nested_array)
+        }
+        "linestring" => {
+            // Handle linestring geometry
+            let nested_array = struct_array
+                .column_by_name("linestring")
+                .ok_or_else(|| DataFusionError::Internal("Missing 'linestring' field".to_string()))?
+                .as_any()
+                .downcast_ref::<ListArray>()
+                .unwrap();
+            process_geometry_envelope(nested_array)
+        }
+        "polygon" => {
+            // Handle polygon geometry
+            let nested_array = struct_array
+                .column_by_name("polygon")
+                .ok_or_else(|| DataFusionError::Internal("Missing 'polygon' field".to_string()))?
+                .as_any()
+                .downcast_ref::<ListArray>()
+                .unwrap();
+            process_geometry_envelope(nested_array)
+        }
+        _ => Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
+    }
+}
+
+fn process_geometry_envelope(nested_array: &ListArray) -> Result<ColumnarValue, DataFusionError> {
     let mut min_x = std::f64::MAX;
     let mut max_x = std::f64::MIN;
     let mut min_y = std::f64::MAX;
     let mut max_y = std::f64::MIN;
 
     for i in 0..nested_array.len() {
-        // Save the reference to the array of arrays to extend its lifetime
         let array_of_arrays_ref = nested_array.value(i);
         let array_of_arrays = array_of_arrays_ref.as_any().downcast_ref::<ListArray>().unwrap();
 
@@ -155,7 +202,7 @@ pub fn spark_st_envelope(
             let array_array_ref = array_of_arrays.value(j);
             let array_of_arrays_arrays = array_array_ref.as_any().downcast_ref::<ListArray>().unwrap();
 
-            geometry_envelope(&mut min_x, &mut max_x, &mut min_y, &mut max_y, array_of_arrays_arrays);
+            build_geometry_envelope(&mut min_x, &mut max_x, &mut min_y, &mut max_y, array_of_arrays_arrays);
         }
     }
 
@@ -197,36 +244,6 @@ pub fn spark_st_envelope(
     // Return the result as a ColumnarValue with the envelope struct
     Ok(ColumnarValue::Array(Arc::new(struct_array)))
 }
-
-fn geometry_envelope(min_x: &mut f64, max_x: &mut f64, min_y: &mut f64, max_y: &mut f64, array_of_arrays_arrays: &ListArray) {
-    for k in 0..array_of_arrays_arrays.len() {
-        let array_array_array_ref = array_of_arrays_arrays.value(k);
-        let struct_array = array_array_array_ref.as_any().downcast_ref::<StructArray>().unwrap();
-
-        let x_array = struct_array.column(0).as_any().downcast_ref::<Float64Array>().unwrap();
-        let y_array = struct_array.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
-
-        // Find the min and max values of x and y
-        for k in 0..x_array.len() {
-            let x = x_array.value(k);
-            let y = y_array.value(k);
-
-            if x < *min_x {
-                *min_x = x;
-            }
-            if x > *max_x {
-                *max_x = x;
-            }
-            if y < *min_y {
-                *min_y = y;
-            }
-            if y > *max_y {
-                *max_y = y;
-            }
-        }
-    }
-}
-
 
 #[cfg(test)]
 mod tests {

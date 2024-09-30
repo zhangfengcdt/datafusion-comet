@@ -17,6 +17,7 @@
 
 use std::sync::Arc;
 use arrow_array::builder::{ArrayBuilder, Float64Builder, GenericListBuilder, ListBuilder, StringBuilder, StructBuilder};
+use arrow_array::{Array, Float64Array, ListArray, StructArray};
 use arrow_schema::{DataType, Field};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::DataFusionError;
@@ -105,6 +106,35 @@ pub fn get_geometry_fields(coordinate_fields: Vec<Field>) -> Vec<Field> {
             true
         )
     ]
+}
+
+pub fn build_geometry_envelope(min_x: &mut f64, max_x: &mut f64, min_y: &mut f64, max_y: &mut f64, array_of_arrays_arrays: &ListArray) {
+    for k in 0..array_of_arrays_arrays.len() {
+        let array_array_array_ref = array_of_arrays_arrays.value(k);
+        let struct_array = array_array_array_ref.as_any().downcast_ref::<StructArray>().unwrap();
+
+        let x_array = struct_array.column(0).as_any().downcast_ref::<Float64Array>().unwrap();
+        let y_array = struct_array.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        // Find the min and max values of x and y
+        for k in 0..x_array.len() {
+            let x = x_array.value(k);
+            let y = y_array.value(k);
+
+            if x < *min_x {
+                *min_x = x;
+            }
+            if x > *max_x {
+                *max_x = x;
+            }
+            if y < *min_y {
+                *min_y = y;
+            }
+            if y > *max_y {
+                *max_y = y;
+            }
+        }
+    }
 }
 
 pub fn build_geometry_point(point_builder: StructBuilder) -> Result<ColumnarValue, DataFusionError> {
