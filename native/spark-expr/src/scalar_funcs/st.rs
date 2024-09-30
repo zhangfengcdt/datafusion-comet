@@ -16,18 +16,15 @@
 // under the License.
 
 use std::sync::Arc;
-use arrow_array::builder::{ArrayBuilder, Float64Builder, ListBuilder, StringBuilder, StructBuilder};
+use arrow_array::builder::{ArrayBuilder, Float64Builder, ListBuilder, StructBuilder};
 use arrow_array::{Array, Float64Array, ListArray, StructArray};
 use arrow_schema::{DataType, Field};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::DataFusionError;
 use crate::scalar_funcs::geometry_helpers::{
-    get_coordinate_fields, get_geometry_fields, get_empty_geometry,
-    get_empty_geometry2, get_empty_geometry3, get_empty_point,
+    get_coordinate_fields, get_geometry_fields,
+    build_geometry_point, build_geometry_linestring,
 };
-
-const GEOMETRY_TYPE_POINT: &str = "point";
-const GEOMETRY_TYPE_LINESTRING: &str = "linestring";
 
 pub fn spark_st_point(
     _args: &[ColumnarValue],
@@ -35,9 +32,6 @@ pub fn spark_st_point(
 ) -> Result<ColumnarValue, DataFusionError> {
     // Use the helper function to get coordinate fields
     let coordinate_fields = get_coordinate_fields();
-
-    // Use the helper function to get geometry fields based on the coordinate fields
-    let geometry_fields = get_geometry_fields(coordinate_fields.clone().into());
 
     // Create the builders for the coordinate fields (x, y, z, m)
     let mut x_builder = Float64Builder::new();
@@ -65,32 +59,8 @@ pub fn spark_st_point(
     // Finalize the point (x, y, z, m)
     point_builder.append(true);
 
-    // Create the StringBuilder for the "type" field (set as "point")
-    let mut type_builder = StringBuilder::new();
-    type_builder.append_value(GEOMETRY_TYPE_POINT);
-
-    // Create the StructBuilder for the geometry (type, point, etc.)
-    let mut geometry_builder = StructBuilder::new(
-        geometry_fields.clone(), // Convert Vec<Field> to Arc<[Field]>
-        vec![
-            Box::new(type_builder) as Box<dyn ArrayBuilder>, // "type" field as "point"
-            Box::new(point_builder) as Box<dyn ArrayBuilder>,  // Adding "point" field
-            Box::new(get_empty_geometry(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // Adding "multipoint" field
-            Box::new(get_empty_geometry(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // Adding "linestring" field
-            Box::new(get_empty_geometry2(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // Adding "multilinestring" field
-            Box::new(get_empty_geometry2(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // Adding "polygon" field
-            Box::new(get_empty_geometry3(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // Adding "multipolygon" field
-        ],
-    );
-
-    // Append values to the geometry struct
-    geometry_builder.append(true);
-
-    // Finalize the geometry struct
-    let geometry_array = geometry_builder.finish();
-
-    // Return the geometry as a ColumnarValue
-    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
+    // Return the result as a ColumnarValue with the point struct
+    build_geometry_point(point_builder)
 }
 
 pub fn spark_st_linestring(
@@ -99,9 +69,6 @@ pub fn spark_st_linestring(
 ) -> Result<ColumnarValue, DataFusionError> {
     // Use the helper function to get coordinate fields
     let coordinate_fields = get_coordinate_fields();
-
-    // Use the helper function to get geometry fields based on the coordinate fields
-    let geometry_fields = get_geometry_fields(coordinate_fields.clone().into());
 
     // Create the builders for the coordinate fields (x, y, z, m)
     let mut x_builder = Float64Builder::new();
@@ -135,32 +102,8 @@ pub fn spark_st_linestring(
     // Append a sample linestring
     linestring_builder.append(true);
 
-    // Create the StringBuilder for the "type" field (set as "linestring")
-    let mut type_builder = StringBuilder::new();
-    type_builder.append_value(GEOMETRY_TYPE_LINESTRING);
-
-    // Create the StructBuilder for the geometry (type, point, multipoint, linestring, multilinestring, polygon, multipolygon)
-    let mut geometry_builder = StructBuilder::new(
-        geometry_fields.clone(), // Convert Vec<Field> to Arc<[Field]>
-        vec![
-            Box::new(type_builder) as Box<dyn ArrayBuilder>, // "type" field
-            Box::new(get_empty_point(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "point" field
-            Box::new(get_empty_geometry(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "multipoint" field
-            Box::new(linestring_builder) as Box<dyn ArrayBuilder>,  // "linestring" field
-            Box::new(get_empty_geometry2(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "multilinestring" field
-            Box::new(get_empty_geometry2(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "polygon" field
-            Box::new(get_empty_geometry3(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "multipolygon" field
-        ],
-    );
-
-    // Append values to the geometry struct
-    geometry_builder.append(true);
-
-    // Finalize the geometry struct
-    let geometry_array = geometry_builder.finish();
-
-    // Return the geometry as a ColumnarValue
-    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
+    // Return the result as a ColumnarValue with the linestring struct
+    build_geometry_linestring(linestring_builder)
 }
 
 pub fn spark_st_envelope(
