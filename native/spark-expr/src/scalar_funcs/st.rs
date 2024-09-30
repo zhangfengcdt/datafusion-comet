@@ -43,6 +43,19 @@ fn get_geometry_fields(coordinate_fields: Vec<Field>) -> Vec<Field> {
             true
         ),
         Field::new(
+            "multilinestring",
+            DataType::List(Box::new(Field::new(
+                "item",
+                DataType::List(Box::new(Field::new(
+                    "item",
+                    DataType::Struct(coordinate_fields.clone().into()),
+                    true,
+                )).into()),
+                true,
+            )).into()),
+            true
+        ),
+        Field::new(
             "polygon",
             DataType::List(Box::new(Field::new(
                 "item",
@@ -96,6 +109,7 @@ pub fn spark_st_point(
 
     let multipoint_builder = get_empty_geometry(coordinate_fields.clone());
     let linestring_builder = get_empty_geometry(coordinate_fields.clone());
+    let multilinestring_builder = get_empty_geometry2(coordinate_fields.clone());
     let polygon_builder = get_empty_geometry2(coordinate_fields.clone());
 
     // Create the StringBuilder for the "type" field (set as "point")
@@ -110,6 +124,7 @@ pub fn spark_st_point(
             Box::new(point_builder) as Box<dyn ArrayBuilder>,  // Adding "point" field
             Box::new(multipoint_builder) as Box<dyn ArrayBuilder>,  // Adding "multipoint" field
             Box::new(linestring_builder) as Box<dyn ArrayBuilder>,  // Adding "linestring" field
+            Box::new(multilinestring_builder) as Box<dyn ArrayBuilder>,  // Adding "multilinestring" field
             Box::new(polygon_builder) as Box<dyn ArrayBuilder>,  // Adding "polygon" field
         ],
     );
