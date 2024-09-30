@@ -101,6 +101,35 @@ pub fn get_geometry_fields(coordinate_fields: Vec<Field>) -> Vec<Field> {
     ]
 }
 
+pub fn get_empty_point(coordinate_fields: Vec<Field>) -> StructBuilder {
+    // Create the builders for the coordinate fields (x, y, z, m)
+    let mut x_builder = Float64Builder::new();
+    let mut y_builder = Float64Builder::new();
+    let mut z_builder = Float64Builder::new();
+    let mut m_builder = Float64Builder::new();
+
+    // Append sample values to the coordinate fields
+    x_builder.append_value(0.0);
+    y_builder.append_value(0.0);
+    z_builder.append_value(0.0);
+    m_builder.append_value(0.0);
+
+    // Create the StructBuilder for the point geometry (with x, y, z, m)
+    let mut point_builder = StructBuilder::new(
+        coordinate_fields.clone(), // Use the coordinate fields
+        vec![
+            Box::new(x_builder) as Box<dyn ArrayBuilder>,
+            Box::new(y_builder),
+            Box::new(z_builder),
+            Box::new(m_builder),
+        ],
+    );
+
+    // Finalize the point (x, y, z, m)
+    point_builder.append_null();
+    point_builder
+}
+
 pub fn get_empty_geometry(coordinate_fields: Vec<Field>) -> GenericListBuilder<i32, StructBuilder> {
     // Create the ListBuilder for the multipoint geometry (with x, y, z, m)
     let mut multipoint_builder = ListBuilder::new(StructBuilder::new(

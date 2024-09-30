@@ -16,15 +16,18 @@
 // under the License.
 
 use std::sync::Arc;
-use arrow_array::builder::{ArrayBuilder, Float64Builder, StringBuilder, StructBuilder};
+use arrow_array::builder::{ArrayBuilder, Float64Builder, ListBuilder, StringBuilder, StructBuilder};
 use arrow_array::{Array, Float64Array, ListArray, StructArray};
 use arrow_schema::{DataType, Field};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::DataFusionError;
 use crate::scalar_funcs::geometry_helpers::{
     get_coordinate_fields, get_geometry_fields, get_empty_geometry,
-    get_empty_geometry2, get_empty_geometry3,
+    get_empty_geometry2, get_empty_geometry3, get_empty_point,
 };
+
+const GEOMETRY_TYPE_POINT: &str = "point";
+const GEOMETRY_TYPE_LINESTRING: &str = "linestring";
 
 pub fn spark_st_point(
     _args: &[ColumnarValue],
@@ -43,10 +46,10 @@ pub fn spark_st_point(
     let mut m_builder = Float64Builder::new();
 
     // Append sample values to the coordinate fields
-    x_builder.append_value(1.0);
-    y_builder.append_value(2.0);
-    z_builder.append_value(3.0);
-    m_builder.append_value(4.0);
+    x_builder.append_value(0.0);
+    y_builder.append_value(0.0);
+    z_builder.append_value(0.0);
+    m_builder.append_value(0.0);
 
     // Create the StructBuilder for the point geometry (with x, y, z, m)
     let mut point_builder = StructBuilder::new(
@@ -62,15 +65,9 @@ pub fn spark_st_point(
     // Finalize the point (x, y, z, m)
     point_builder.append(true);
 
-    let multipoint_builder = get_empty_geometry(coordinate_fields.clone());
-    let linestring_builder = get_empty_geometry(coordinate_fields.clone());
-    let multilinestring_builder = get_empty_geometry2(coordinate_fields.clone());
-    let polygon_builder = get_empty_geometry2(coordinate_fields.clone());
-    let multipolygon_builder = get_empty_geometry3(coordinate_fields.clone());
-
     // Create the StringBuilder for the "type" field (set as "point")
     let mut type_builder = StringBuilder::new();
-    type_builder.append_value("point");
+    type_builder.append_value(GEOMETRY_TYPE_POINT);
 
     // Create the StructBuilder for the geometry (type, point, etc.)
     let mut geometry_builder = StructBuilder::new(
@@ -78,11 +75,11 @@ pub fn spark_st_point(
         vec![
             Box::new(type_builder) as Box<dyn ArrayBuilder>, // "type" field as "point"
             Box::new(point_builder) as Box<dyn ArrayBuilder>,  // Adding "point" field
-            Box::new(multipoint_builder) as Box<dyn ArrayBuilder>,  // Adding "multipoint" field
-            Box::new(linestring_builder) as Box<dyn ArrayBuilder>,  // Adding "linestring" field
-            Box::new(multilinestring_builder) as Box<dyn ArrayBuilder>,  // Adding "multilinestring" field
-            Box::new(polygon_builder) as Box<dyn ArrayBuilder>,  // Adding "polygon" field
-            Box::new(multipolygon_builder) as Box<dyn ArrayBuilder>,  // Adding "multipolygon" field
+            Box::new(get_empty_geometry(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // Adding "multipoint" field
+            Box::new(get_empty_geometry(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // Adding "linestring" field
+            Box::new(get_empty_geometry2(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // Adding "multilinestring" field
+            Box::new(get_empty_geometry2(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // Adding "polygon" field
+            Box::new(get_empty_geometry3(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // Adding "multipolygon" field
         ],
     );
 
@@ -96,6 +93,75 @@ pub fn spark_st_point(
     Ok(ColumnarValue::Array(Arc::new(geometry_array)))
 }
 
+pub fn spark_st_linestring(
+    _args: &[ColumnarValue],
+    _data_type: &DataType,
+) -> Result<ColumnarValue, DataFusionError> {
+    // Use the helper function to get coordinate fields
+    let coordinate_fields = get_coordinate_fields();
+
+    // Use the helper function to get geometry fields based on the coordinate fields
+    let geometry_fields = get_geometry_fields(coordinate_fields.clone().into());
+
+    // Create the builders for the coordinate fields (x, y, z, m)
+    let mut x_builder = Float64Builder::new();
+    let mut y_builder = Float64Builder::new();
+    let mut z_builder = Float64Builder::new();
+    let mut m_builder = Float64Builder::new();
+
+    // Append sample values to the coordinate fields
+    x_builder.append_value(0.0);
+    y_builder.append_value(0.0);
+    z_builder.append_value(0.0);
+    m_builder.append_value(0.0);
+
+    // Create the StructBuilder for the point geometry (with x, y, z, m)
+    let mut point_builder = StructBuilder::new(
+        coordinate_fields.clone(), // Use the coordinate fields
+        vec![
+            Box::new(x_builder) as Box<dyn ArrayBuilder>,
+            Box::new(y_builder),
+            Box::new(z_builder),
+            Box::new(m_builder),
+        ],
+    );
+
+    // Finalize the point (x, y, z, m)
+    point_builder.append(true);
+
+    // Create the ListBuilder for the linestring geometry
+    let mut linestring_builder = ListBuilder::new(point_builder);
+
+    // Append a sample linestring
+    linestring_builder.append(true);
+
+    // Create the StringBuilder for the "type" field (set as "linestring")
+    let mut type_builder = StringBuilder::new();
+    type_builder.append_value(GEOMETRY_TYPE_LINESTRING);
+
+    // Create the StructBuilder for the geometry (type, point, multipoint, linestring, multilinestring, polygon, multipolygon)
+    let mut geometry_builder = StructBuilder::new(
+        geometry_fields.clone(), // Convert Vec<Field> to Arc<[Field]>
+        vec![
+            Box::new(type_builder) as Box<dyn ArrayBuilder>, // "type" field
+            Box::new(get_empty_point(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "point" field
+            Box::new(get_empty_geometry(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "multipoint" field
+            Box::new(linestring_builder) as Box<dyn ArrayBuilder>,  // "linestring" field
+            Box::new(get_empty_geometry2(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "multilinestring" field
+            Box::new(get_empty_geometry2(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "polygon" field
+            Box::new(get_empty_geometry3(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "multipolygon" field
+        ],
+    );
+
+    // Append values to the geometry struct
+    geometry_builder.append(true);
+
+    // Finalize the geometry struct
+    let geometry_array = geometry_builder.finish();
+
+    // Return the geometry as a ColumnarValue
+    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
+}
 
 pub fn spark_st_envelope(
     args: &[ColumnarValue],
@@ -104,10 +170,10 @@ pub fn spark_st_envelope(
     // Ensure that the data_type is a struct with fields minX, minY, maxX, maxY, all of type Float64
     if let DataType::Struct(fields) = data_type {
         let expected_fields = vec![
-            Field::new("minX", DataType::Float64, false),
-            Field::new("minY", DataType::Float64, false),
-            Field::new("maxX", DataType::Float64, false),
-            Field::new("maxY", DataType::Float64, false),
+            Field::new("xmin", DataType::Float64, false),
+            Field::new("ymin", DataType::Float64, false),
+            Field::new("xmax", DataType::Float64, false),
+            Field::new("ymax", DataType::Float64, false),
         ];
 
         if fields.len() != expected_fields.len()
@@ -146,16 +212,16 @@ pub fn spark_st_envelope(
             let array_array_ref = array_of_arrays.value(j);
             let array_of_arrays_arrays = array_array_ref.as_any().downcast_ref::<ListArray>().unwrap();
 
-            cal_envelope(&mut min_x, &mut max_x, &mut min_y, &mut max_y, array_of_arrays_arrays);
+            geometry_envelope(&mut min_x, &mut max_x, &mut min_y, &mut max_y, array_of_arrays_arrays);
         }
     }
 
     // Define the fields for the envelope struct (minX, minY, maxX, maxY)
     let envelope_fields = vec![
-        Field::new("minX", DataType::Float64, false),
-        Field::new("minY", DataType::Float64, false),
-        Field::new("maxX", DataType::Float64, false),
-        Field::new("maxY", DataType::Float64, false),
+        Field::new("xmin", DataType::Float64, false),
+        Field::new("ymin", DataType::Float64, false),
+        Field::new("xmax", DataType::Float64, false),
+        Field::new("ymax", DataType::Float64, false),
     ];
 
     // Create the builders for each field in the struct
@@ -189,7 +255,7 @@ pub fn spark_st_envelope(
     Ok(ColumnarValue::Array(Arc::new(struct_array)))
 }
 
-fn cal_envelope(min_x: &mut f64, max_x: &mut f64, min_y: &mut f64, max_y: &mut f64, array_of_arrays_arrays: &ListArray) {
+fn geometry_envelope(min_x: &mut f64, max_x: &mut f64, min_y: &mut f64, max_y: &mut f64, array_of_arrays_arrays: &ListArray) {
     for k in 0..array_of_arrays_arrays.len() {
         let array_array_array_ref = array_of_arrays_arrays.value(k);
         let struct_array = array_array_array_ref.as_any().downcast_ref::<StructArray>().unwrap();
@@ -242,10 +308,10 @@ mod tests {
 
         // Define the expected data type for the envelope struct
         let envelope_data_type = DataType::Struct(vec![
-            Field::new("minX", DataType::Float64, false),
-            Field::new("minY", DataType::Float64, false),
-            Field::new("maxX", DataType::Float64, false),
-            Field::new("maxY", DataType::Float64, false),
+            Field::new("xmin", DataType::Float64, false),
+            Field::new("ymin", DataType::Float64, false),
+            Field::new("xmax", DataType::Float64, false),
+            Field::new("ymax", DataType::Float64, false),
         ].into());
 
         // Call the spark_st_envelope function
@@ -435,6 +501,24 @@ mod tests {
             assert_eq!(result_array.column(0).as_any().downcast_ref::<StringArray>().unwrap().value(0), "point"); // "type"
         } else {
             panic!("Expected geometry to be point");
+        }
+    }
+
+    #[test]
+    fn test_spark_st_linestring() {
+        // Define the expected data type for the geometry struct
+        let coordinate_fields = get_coordinate_fields();
+        let geometry_fields = get_geometry_fields(coordinate_fields.clone().into());
+
+        // Call the spark_st_linestring function
+        let result = spark_st_linestring(&[], &DataType::Struct(geometry_fields.clone().into())).unwrap();
+
+        // Assert the result is as expected
+        if let ColumnarValue::Array(array) = result {
+            let result_array = array.as_any().downcast_ref::<StructArray>().unwrap();
+            assert_eq!(result_array.column(0).as_any().downcast_ref::<StringArray>().unwrap().value(0), "linestring"); // "type"
+        } else {
+            panic!("Expected geometry to be linestring");
         }
     }
 }
