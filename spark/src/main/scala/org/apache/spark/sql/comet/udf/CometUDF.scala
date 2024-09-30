@@ -35,31 +35,32 @@ class CometUDF {
 
   private val GEOMETRY: Array[StructField] = Array(
     DataTypes.createStructField("type", DataTypes.StringType, false),
-    DataTypes.createStructField("point", DataTypes.createStructType(COORDINATE), false),
+    DataTypes.createStructField("point", DataTypes.createStructType(COORDINATE), true),
     DataTypes.createStructField(
       "multipoint",
       DataTypes.createArrayType(DataTypes.createStructType(COORDINATE)),
-      false),
-    DataTypes.createStructField(
-      "linestring",
-      DataTypes.createArrayType(DataTypes.createStructType(COORDINATE)),
-      false),
-    DataTypes.createStructField(
-      "multilinestring",
-      DataTypes.createArrayType(
-        DataTypes.createArrayType(DataTypes.createStructType(COORDINATE))),
-      false),
-    DataTypes.createStructField(
-      "polygon",
-      DataTypes.createArrayType(
-        DataTypes.createArrayType(DataTypes.createStructType(COORDINATE))),
-      false),
-    DataTypes.createStructField(
-      "multipolygon",
-      DataTypes.createArrayType(
-        DataTypes.createArrayType(
-          DataTypes.createArrayType(DataTypes.createStructType(COORDINATE)))),
-      false))
+      true)
+//    DataTypes.createStructField(
+//      "linestring",
+//      DataTypes.createArrayType(DataTypes.createStructType(COORDINATE)),
+//      false),
+//    DataTypes.createStructField(
+//      "multilinestring",
+//      DataTypes.createArrayType(
+//        DataTypes.createArrayType(DataTypes.createStructType(COORDINATE))),
+//      false),
+//    DataTypes.createStructField(
+//      "polygon",
+//      DataTypes.createArrayType(
+//        DataTypes.createArrayType(DataTypes.createStructType(COORDINATE))),
+//      false),
+//    DataTypes.createStructField(
+//      "multipolygon",
+//      DataTypes.createArrayType(
+//        DataTypes.createArrayType(
+//          DataTypes.createArrayType(DataTypes.createStructType(COORDINATE)))),
+//      false)
+  )
 
   private val GEOMETRY_ENVELOPE: Array[StructField] = Array(
     DataTypes.createStructField("minX", DataTypes.DoubleType, false),

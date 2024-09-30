@@ -52,7 +52,7 @@ pub use chr::SparkChrFunc;
 
 pub mod hash_expressions;
 mod st;
-pub use st::spark_st_envelope;
+pub use st::{spark_st_envelope, spark_st_point};
 
 // exposed for benchmark only
 pub use hash_expressions::{spark_murmur3_hash, spark_xxhash64};

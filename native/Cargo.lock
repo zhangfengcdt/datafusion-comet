@@ -943,6 +943,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "datafusion-physical-expr",
+ "lazy_static",
  "num",
  "rand",
  "regex",

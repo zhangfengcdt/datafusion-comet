@@ -1,9 +1,112 @@
 use std::sync::Arc;
-use arrow_array::builder::{ArrayBuilder, Float64Builder, StructBuilder};
+use arrow_array::builder::{ArrayBuilder, Float64Builder, ListBuilder, StringBuilder, StructBuilder};
 use arrow_array::{Array, Float64Array, ListArray, StructArray};
 use arrow_schema::{DataType, Field};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::DataFusionError;
+
+// Helper function to define the coordinate fields using the expected_fields format
+fn get_coordinate_fields() -> Vec<Field> {
+    vec![
+        Field::new("x", DataType::Float64, false),
+        Field::new("y", DataType::Float64, false),
+        Field::new("z", DataType::Float64, false),
+        Field::new("m", DataType::Float64, false),
+    ]
+}
+
+// Helper function to define the geometry fields using the coordinate fields
+fn get_geometry_fields(coordinate_fields: Vec<Field>) -> Vec<Field> {
+    vec![
+        Field::new("type", DataType::Utf8, false), // "type" field as Utf8 for string
+        Field::new("point", DataType::Struct(coordinate_fields.clone().into()), true),
+        Field::new(
+            "multipoint",
+            DataType::List(Box::new(Field::new(
+                "item",
+                DataType::Struct(coordinate_fields.clone().into()),
+                true,
+            )).into()),
+            // Arrow data format requires that list elements be nullable to handle cases where some elements
+            // in the list might be missing or undefined
+            true
+        )
+    ]
+}
+
+pub fn spark_st_point(
+    _args: &[ColumnarValue],
+    _data_type: &DataType,
+) -> Result<ColumnarValue, DataFusionError> {
+    // Use the helper function to get coordinate fields
+    let coordinate_fields = get_coordinate_fields();
+
+    // Use the helper function to get geometry fields based on the coordinate fields
+    let geometry_fields = get_geometry_fields(coordinate_fields.clone().into());
+
+    // Create the builders for the coordinate fields (x, y, z, m)
+    let mut x_builder = Float64Builder::new();
+    let mut y_builder = Float64Builder::new();
+    let mut z_builder = Float64Builder::new();
+    let mut m_builder = Float64Builder::new();
+
+    // Append sample values to the coordinate fields
+    x_builder.append_value(1.0);
+    y_builder.append_value(2.0);
+    z_builder.append_value(3.0);
+    m_builder.append_value(4.0);
+
+    // Create the StructBuilder for the point geometry (with x, y, z, m)
+    let mut point_builder = StructBuilder::new(
+        coordinate_fields.clone(), // Use the coordinate fields
+        vec![
+            Box::new(x_builder) as Box<dyn ArrayBuilder>,
+            Box::new(y_builder),
+            Box::new(z_builder),
+            Box::new(m_builder),
+        ],
+    );
+
+    // Finalize the point (x, y, z, m)
+    point_builder.append(true);
+
+    // Create the ListBuilder for the multipoint geometry (with x, y, z, m)
+    let mut multipoint_builder = ListBuilder::new(StructBuilder::new(
+        coordinate_fields.clone(), // Use the coordinate fields
+        vec![
+            Box::new(Float64Builder::new()) as Box<dyn ArrayBuilder>,
+            Box::new(Float64Builder::new()),
+            Box::new(Float64Builder::new()),
+            Box::new(Float64Builder::new()),
+        ],
+    ));
+
+    // Append null data to the multipoint_builder
+    multipoint_builder.append_null();
+
+    // Create the StringBuilder for the "type" field (set as "point")
+    let mut type_builder = StringBuilder::new();
+    type_builder.append_value("point");
+
+    // Create the StructBuilder for the geometry (type, point, etc.)
+    let mut geometry_builder = StructBuilder::new(
+        geometry_fields.clone(), // Convert Vec<Field> to Arc<[Field]>
+        vec![
+            Box::new(type_builder) as Box<dyn ArrayBuilder>, // "type" field as "point"
+            Box::new(point_builder) as Box<dyn ArrayBuilder>,  // Adding "point" field
+            Box::new(multipoint_builder) as Box<dyn ArrayBuilder>,  // Adding "multipoint" field
+        ],
+    );
+
+    // Append values to the geometry struct
+    geometry_builder.append(true);
+
+    // Finalize the geometry struct
+    let geometry_array = geometry_builder.finish();
+
+    // Return the geometry as a ColumnarValue
+    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
+}
 
 pub fn spark_st_envelope(
     args: &[ColumnarValue],
@@ -136,6 +239,7 @@ mod tests {
     use datafusion::physical_plan::ColumnarValue;
     use std::sync::Arc;
     use arrow_array::builder::ListBuilder;
+    use arrow_array::StringArray;
 
     #[test]
     fn test_spark_st_envelope() {
@@ -325,6 +429,24 @@ mod tests {
             }
         } else {
             println!("{}Non-array ColumnarValue", indent);
+        }
+    }
+
+    #[test]
+    fn test_spark_st_point() {
+        // Define the expected data type for the geometry struct
+        let coordinate_fields = get_coordinate_fields();
+        let geometry_fields = get_geometry_fields(coordinate_fields.clone().into());
+
+        // Call the spark_st_point function
+        let result = spark_st_point(&[], &DataType::Struct(geometry_fields.clone().into())).unwrap();
+
+        // Assert the result is as expected
+        if let ColumnarValue::Array(array) = result {
+            let result_array = array.as_any().downcast_ref::<StructArray>().unwrap();
+            assert_eq!(result_array.column(0).as_any().downcast_ref::<StringArray>().unwrap().value(0), "point"); // "type"
+        } else {
+            panic!("Expected geometry to be point");
         }
     }
 }

@@ -97,10 +97,14 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
 """)
 
       val df =
-        sql(
-          s"select envelope.minX, envelope.minY, envelope.maxX, envelope.maxY from (SELECT st_envelope(geometry3) AS envelope from $table)")
+//        sql(
+//          s"select envelope.minX, envelope.minY, envelope.maxX, envelope.maxY from (SELECT st_envelope(geometry3) AS envelope from $table)")
+
+        sql(s"select pt.x, pt.y, pt.z, pt.m from (SELECT st_point(0).point as pt from $table)")
 
       df.explain(false)
+
+      df.printSchema()
 
       df.show()
     }
