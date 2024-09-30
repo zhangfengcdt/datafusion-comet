@@ -39,28 +39,27 @@ class CometUDF {
     DataTypes.createStructField(
       "multipoint",
       DataTypes.createArrayType(DataTypes.createStructType(COORDINATE)),
-      true)
-//    DataTypes.createStructField(
-//      "linestring",
-//      DataTypes.createArrayType(DataTypes.createStructType(COORDINATE)),
-//      false),
-//    DataTypes.createStructField(
-//      "multilinestring",
-//      DataTypes.createArrayType(
-//        DataTypes.createArrayType(DataTypes.createStructType(COORDINATE))),
-//      false),
-//    DataTypes.createStructField(
-//      "polygon",
-//      DataTypes.createArrayType(
-//        DataTypes.createArrayType(DataTypes.createStructType(COORDINATE))),
-//      false),
-//    DataTypes.createStructField(
-//      "multipolygon",
-//      DataTypes.createArrayType(
-//        DataTypes.createArrayType(
-//          DataTypes.createArrayType(DataTypes.createStructType(COORDINATE)))),
-//      false)
-  )
+      true),
+    DataTypes.createStructField(
+      "linestring",
+      DataTypes.createArrayType(DataTypes.createStructType(COORDINATE)),
+      true),
+    DataTypes.createStructField(
+      "multilinestring",
+      DataTypes.createArrayType(
+        DataTypes.createArrayType(DataTypes.createStructType(COORDINATE))),
+      true),
+    DataTypes.createStructField(
+      "polygon",
+      DataTypes.createArrayType(
+        DataTypes.createArrayType(DataTypes.createStructType(COORDINATE))),
+      true),
+    DataTypes.createStructField(
+      "multipolygon",
+      DataTypes.createArrayType(
+        DataTypes.createArrayType(
+          DataTypes.createArrayType(DataTypes.createStructType(COORDINATE)))),
+      true))
 
   private val GEOMETRY_ENVELOPE: Array[StructField] = Array(
     DataTypes.createStructField("minX", DataTypes.DoubleType, false),
