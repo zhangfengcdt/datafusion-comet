@@ -94,27 +94,27 @@ class CometUDF {
     DataTypes.createStructType(GEOMETRY_ENVELOPE))
 
   val st_point: UserDefinedFunction = udf(
-    new UDF1[Unit, Row] { override def call(dummy: Unit): Row = Row.empty },
+    new UDF1[Row, Row] { override def call(dummy: Row): Row = Row.empty },
     DataTypes.createStructType(GEOMETRY))
 
   val st_multipoint: UserDefinedFunction = udf(
-    new UDF1[Unit, Row] { override def call(dummy: Unit): Row = Row.empty },
+    new UDF1[Row, Row] { override def call(dummy: Row): Row = Row.empty },
     DataTypes.createStructType(GEOMETRY))
 
   val st_linestring: UserDefinedFunction = udf(
-    new UDF1[Unit, Row] { override def call(dummy: Unit): Row = Row.empty },
+    new UDF1[Row, Row] { override def call(dummy: Row): Row = Row.empty },
     DataTypes.createStructType(GEOMETRY))
 
   val st_multilinestring: UserDefinedFunction = udf(
-    new UDF1[Unit, Row] { override def call(dummy: Unit): Row = Row.empty },
+    new UDF1[Row, Row] { override def call(dummy: Row): Row = Row.empty },
     DataTypes.createStructType(GEOMETRY))
 
   val st_polygon: UserDefinedFunction = udf(
-    new UDF1[Unit, Row] { override def call(dummy: Unit): Row = Row.empty },
+    new UDF1[Row, Row] { override def call(dummy: Row): Row = Row.empty },
     DataTypes.createStructType(GEOMETRY))
 
   val st_multipolygon: UserDefinedFunction = udf(
-    new UDF1[Unit, Row] { override def call(dummy: Unit): Row = Row.empty },
+    new UDF1[Row, Row] { override def call(dummy: Row): Row = Row.empty },
     DataTypes.createStructType(GEOMETRY))
 
   /**
