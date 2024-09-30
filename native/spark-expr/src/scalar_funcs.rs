@@ -52,6 +52,8 @@ pub use chr::SparkChrFunc;
 
 pub mod hash_expressions;
 mod st;
+mod geometry_helpers;
+
 pub use st::{spark_st_envelope, spark_st_point};
 
 // exposed for benchmark only
