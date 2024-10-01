@@ -23,7 +23,7 @@ use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::DataFusionError;
 use crate::scalar_funcs::geometry_helpers::{
     get_coordinate_fields, get_geometry_fields,
-    build_geometry_envelope,
+    build_geometry_envelope, build_geometry_polygon,
     build_geometry_point, build_geometry_linestring,
 };
 
@@ -126,7 +126,6 @@ pub fn spark_st_envelope(
             return Err(DataFusionError::Internal(
                 "Expected struct with fields (xmin, ymin, xmax, ymax) of type Float64".to_string(),
             ));
-            // println!("Expected struct with fields (minX, minY, maxX, maxY) of type Float64");
         }
     } else {
         return Err(DataFusionError::Internal(
@@ -182,13 +181,50 @@ pub fn spark_st_envelope(
                 .as_any()
                 .downcast_ref::<ListArray>()
                 .unwrap();
-            process_geometry_envelope(nested_array)
+            process_geometry2_envelope(nested_array)
+        }
+        "multipolygon" => {
+            // Handle polygon geometry
+            let nested_array = struct_array
+                .column_by_name("multipolygon")
+                .ok_or_else(|| DataFusionError::Internal("Missing 'multipolygon' field".to_string()))?
+                .as_any()
+                .downcast_ref::<ListArray>()
+                .unwrap();
+            process_geometry3_envelope(nested_array)
         }
         _ => Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
     }
 }
 
 fn process_geometry_envelope(nested_array: &ListArray) -> Result<ColumnarValue, DataFusionError> {
+    let mut min_x = std::f64::MAX;
+    let mut max_x = std::f64::MIN;
+    let mut min_y = std::f64::MAX;
+    let mut max_y = std::f64::MIN;
+
+    build_geometry_envelope(&mut min_x, &mut max_x, &mut min_y, &mut max_y, nested_array);
+
+    build_envelope(min_x, max_x, min_y, max_y)
+}
+
+fn process_geometry2_envelope(nested_array: &ListArray) -> Result<ColumnarValue, DataFusionError> {
+    let mut min_x = std::f64::MAX;
+    let mut max_x = std::f64::MIN;
+    let mut min_y = std::f64::MAX;
+    let mut max_y = std::f64::MIN;
+
+    for i in 0..nested_array.len() {
+        let array_of_arrays_ref = nested_array.value(i);
+        let array_of_arrays = array_of_arrays_ref.as_any().downcast_ref::<ListArray>().unwrap();
+
+        build_geometry_envelope(&mut min_x, &mut max_x, &mut min_y, &mut max_y, array_of_arrays);
+    }
+
+    build_envelope(min_x, max_x, min_y, max_y)
+}
+
+fn process_geometry3_envelope(nested_array: &ListArray) -> Result<ColumnarValue, DataFusionError> {
     let mut min_x = std::f64::MAX;
     let mut max_x = std::f64::MIN;
     let mut min_y = std::f64::MAX;
@@ -206,6 +242,10 @@ fn process_geometry_envelope(nested_array: &ListArray) -> Result<ColumnarValue, 
         }
     }
 
+    build_envelope(min_x, max_x, min_y, max_y)
+}
+
+fn build_envelope(min_x: f64, max_x: f64, min_y: f64, max_y: f64) -> Result<ColumnarValue, DataFusionError> {
     // Define the fields for the envelope struct (minX, minY, maxX, maxY)
     let envelope_fields = vec![
         Field::new("xmin", DataType::Float64, false),
@@ -248,10 +288,9 @@ fn process_geometry_envelope(nested_array: &ListArray) -> Result<ColumnarValue, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::{Float64Array, ListArray, StructArray, StructBuilder};
+    use arrow::array::{Float64Array, StructArray, StructBuilder};
     use arrow::datatypes::{DataType, Field};
     use datafusion::physical_plan::ColumnarValue;
-    use std::sync::Arc;
     use arrow_array::builder::ListBuilder;
     use arrow_array::StringArray;
 
@@ -263,7 +302,6 @@ mod tests {
         if let ColumnarValue::Array(ref array) = columnar_value {
             let schema = array.data_type();
             print_schema(schema, 0);
-            print_columnar_value(&columnar_value, 0); // Print the columnar value's content
         }
 
         // Define the expected data type for the envelope struct
@@ -298,7 +336,7 @@ mod tests {
             Field::new("m", DataType::Float64, false),
         ];
 
-        // Create the inner struct array (with one element: (1.0, 2.0))
+        // Create the inner struct array (with one element: (1.0, 2.0, 3.0, 4.0))
         let mut struct_builder = StructBuilder::new(
             fields.clone(),
             vec![
@@ -315,15 +353,16 @@ mod tests {
         struct_builder.append(true); // Append the struct
         let struct_array = struct_builder.finish();
 
-        let mut list_builder = ListBuilder::new(ListBuilder::new(ListBuilder::new(StructBuilder::new(
+        // Create nested list builders to match the expected structure
+        let mut list_builder = ListBuilder::new(ListBuilder::new(StructBuilder::new(
             fields.clone(),
             vec![
                 Box::new(Float64Builder::new()) as Box<dyn ArrayBuilder>,
-                Box::new(Float64Builder::new()) as Box<dyn ArrayBuilder>,
-                Box::new(Float64Builder::new()) as Box<dyn ArrayBuilder>,
-                Box::new(Float64Builder::new()) as Box<dyn ArrayBuilder>,
+                Box::new(Float64Builder::new()),
+                Box::new(Float64Builder::new()),
+                Box::new(Float64Builder::new()),
             ],
-        ))));
+        )));
 
         // Manually append values from the struct_array into the list builder
         for i in 0..struct_array.len() {
@@ -333,9 +372,8 @@ mod tests {
             let z_value = struct_array.column(2).as_any().downcast_ref::<Float64Array>().unwrap().value(i);
             let m_value = struct_array.column(3).as_any().downcast_ref::<Float64Array>().unwrap().value(i);
 
-            // Append the x and y values into the list builder's struct fields
+            // Append the x, y, z, m values into the list builder's struct fields
             list_builder
-                .values()
                 .values()
                 .values()
                 .field_builder::<Float64Builder>(0)
@@ -344,12 +382,10 @@ mod tests {
             list_builder
                 .values()
                 .values()
-                .values()
                 .field_builder::<Float64Builder>(1)
                 .unwrap()
                 .append_value(y_value);
             list_builder
-                .values()
                 .values()
                 .values()
                 .field_builder::<Float64Builder>(2)
@@ -358,21 +394,16 @@ mod tests {
             list_builder
                 .values()
                 .values()
-                .values()
                 .field_builder::<Float64Builder>(3)
                 .unwrap()
                 .append_value(m_value);
-            list_builder.values().values().values().append(true);
             list_builder.values().values().append(true);
             list_builder.values().append(true);
             list_builder.append(true);
         }
 
-        let list_list_list_struct = list_builder.finish(); // Finish first List<Struct>
-
-        // Wrap the outermost list array in a ColumnarValue
-        let columnar_value = ColumnarValue::Array(Arc::new(list_list_list_struct));
-        columnar_value
+        // Use the new helper function to build the geometry polygon
+        build_geometry_polygon(list_builder).expect("Failed to build geometry polygon")
     }
 
     /// Helper function to format and print the schema
@@ -401,50 +432,6 @@ mod tests {
         }
     }
 
-
-    /// Helper function to print out the contents of a ColumnarValue
-    fn print_columnar_value(columnar_value: &ColumnarValue, indent_level: usize) {
-        let indent = " ".repeat(indent_level * 4);
-
-        if let ColumnarValue::Array(ref array) = columnar_value {
-            match array.data_type() {
-                DataType::List(_) => {
-                    let list_array = array.as_any().downcast_ref::<ListArray>().unwrap();
-                    println!("{}List of length {}:", indent, list_array.len());
-                    for i in 0..list_array.len() {
-                        let sub_array = list_array.value(i);
-                        println!("{}- List item {}:", indent, i);
-                        print_columnar_value(&ColumnarValue::Array(sub_array), indent_level + 1);
-                    }
-                }
-                DataType::Struct(_) => {
-                    let struct_array = array.as_any().downcast_ref::<StructArray>().unwrap();
-                    println!("{}Struct with {} fields:", indent, struct_array.num_columns());
-                    for i in 0..struct_array.num_columns() {
-                        let field_array = struct_array.column(i);
-                        let field_name = struct_array.column_names()[i];
-                        println!("{}- Field '{}':", indent, field_name);
-                        let float_array = field_array.as_any().downcast_ref::<Float64Array>().unwrap();
-                        for j in 0..float_array.len() {
-                            println!("{}  Value {}: {}", indent, j, float_array.value(j));
-                        }
-                    }
-                }
-                DataType::Float64 => {
-                    let float_array = array.as_any().downcast_ref::<Float64Array>().unwrap();
-                    println!("{}Float64 array of length {}:", indent, float_array.len());
-                    for i in 0..float_array.len() {
-                        println!("{}- Value {}: {}", indent, i, float_array.value(i));
-                    }
-                }
-                _ => {
-                    println!("{}Other array type", indent);
-                }
-            }
-        } else {
-            println!("{}Non-array ColumnarValue", indent);
-        }
-    }
 
     #[test]
     fn test_spark_st_point() {
