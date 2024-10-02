@@ -366,7 +366,11 @@ pub fn spark_st_intersects(
     Ok(ColumnarValue::Array(Arc::new(boolean_array)))
 }
 
-fn arrow_to_geos(geom: &ColumnarValue) -> Result<Geometry, DataFusionError> {
+// TODO: The GEOS should accept ColumnarValue as input and return ColumnarValue as output
+// This requires us to register geos::Geometry as a Arrow data type and implement the ArrowArray trait for it
+// which is a bit more involved than the current implementation but will allow us to use GEOS functions directly
+// GeoArrow should be able to support this in the future
+fn arrow_to_geos(geom: &ColumnarValue) -> Result<Vec<Geometry>, DataFusionError> {
     // Downcast to StructArray to check the "type" field
     let struct_array = match geom {
         ColumnarValue::Array(array) => array.as_any().downcast_ref::<StructArray>().unwrap(),
@@ -410,7 +414,8 @@ fn arrow_to_geos(geom: &ColumnarValue) -> Result<Geometry, DataFusionError> {
                 .value(0);
 
             let coord_seq = CoordSeq::new_from_vec(&[[x, y]]).map_err(|e| DataFusionError::Internal(e.to_string()))?;
-            Geometry::create_point(coord_seq).map_err(|e| DataFusionError::Internal(e.to_string()))
+            let point_geom = Geometry::create_point(coord_seq).map_err(|e| DataFusionError::Internal(e.to_string()))?;
+            Ok(vec![point_geom])
         }
         "linestring" => {
             let linestring_array = struct_array
@@ -420,7 +425,8 @@ fn arrow_to_geos(geom: &ColumnarValue) -> Result<Geometry, DataFusionError> {
                 .downcast_ref::<ListArray>()
                 .unwrap();
 
-            let mut coords = Vec::new();
+            let mut geometries = Vec::new();
+
             for i in 0..linestring_array.len() {
                 let array_ref = linestring_array.value(i);
                 let point_array = array_ref.as_any().downcast_ref::<StructArray>().unwrap();
@@ -438,16 +444,20 @@ fn arrow_to_geos(geom: &ColumnarValue) -> Result<Geometry, DataFusionError> {
                     .downcast_ref::<Float64Array>()
                     .unwrap();
 
+                let mut coords = Vec::new();
                 for j in 0..x_array.len() {
                     let x = x_array.value(j);
                     let y = y_array.value(j);
                     coords.push((x, y));
                 }
+
+                let coords: Vec<[f64; 2]> = coords.iter().map(|&(x, y)| [x, y]).collect();
+                let coord_seq = CoordSeq::new_from_vec(&coords).map_err(|e| DataFusionError::Internal(e.to_string()))?;
+                let linestring_geom = Geometry::create_line_string(coord_seq).map_err(|e| DataFusionError::Internal(e.to_string()))?;
+                geometries.push(linestring_geom);
             }
 
-            let coords: Vec<[f64; 2]> = coords.iter().map(|&(x, y)| [x, y]).collect();
-            let coord_seq = CoordSeq::new_from_vec(&coords).map_err(|e| DataFusionError::Internal(e.to_string()))?;
-            Geometry::create_line_string(coord_seq).map_err(|e| DataFusionError::Internal(e.to_string()))
+            Ok(geometries)
         }
         _ => Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
     }
@@ -780,6 +790,6 @@ mod tests {
         let result = arrow_to_geos(&geom_array).unwrap();
 
         // You can still assert the WKT as before
-        assert_eq!(result.to_wkt().unwrap(), "LINESTRING (1 3, 2 4, 5 6)");
+        assert_eq!(result.get(0).expect("REASON").to_wkt().unwrap(), "LINESTRING (1 3, 2 4, 5 6)");
     }
 }
