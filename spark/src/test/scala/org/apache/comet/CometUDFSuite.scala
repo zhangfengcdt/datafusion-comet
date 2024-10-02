@@ -21,7 +21,7 @@ package org.apache.comet
 
 import java.nio.file.{Files, Paths}
 
-import org.apache.spark.sql.CometTestBase
+import org.apache.spark.sql.{CometTestBase, Row}
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 
 class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
@@ -109,6 +109,64 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
       df.printSchema()
 
       df.show()
+    }
+  }
+
+  test("st_intersects udf support") {
+    val table = "test_intersects"
+    val tableLocation = s"/Users/feng/github/datafusion-comet/spark-warehouse/$table"
+    withTable(table) {
+      // Drop the table if it exists
+      sql(s"DROP TABLE IF EXISTS $table")
+
+      // Remove the directory if it still exists
+      val path = Paths.get(tableLocation)
+      if (Files.exists(path)) {
+        import scala.reflect.io.Directory
+        val directory = new Directory(new java.io.File(tableLocation))
+        directory.deleteRecursively() // Delete the existing directory
+      }
+
+      // Create a table with geometry columns
+      sql(s"""
+        CREATE TABLE $table (
+          id STRING,
+          geomA STRUCT<type: STRING, point: STRUCT<x: DOUBLE, y: DOUBLE>>,
+          geomB STRUCT<type: STRING, point: STRUCT<x: DOUBLE, y: DOUBLE>>
+        )
+        USING PARQUET
+      """)
+
+      // Insert some values into the table
+      sql(s"""
+        INSERT INTO $table VALUES (
+          '1',
+          named_struct('type', 'Point', 'point', named_struct('x', 1.0, 'y', 1.0)),
+          named_struct('type', 'Point', 'point', named_struct('x', 1.0, 'y', 1.0))
+        )
+      """)
+
+      sql(s"""
+        INSERT INTO $table VALUES (
+          '2',
+          named_struct('type', 'Point', 'point', named_struct('x', 1.0, 'y', 1.0)),
+          named_struct('type', 'Point', 'point', named_struct('x', 2.0, 'y', 2.0))
+        )
+      """)
+
+      // Use the st_intersects UDF to check if the geometries intersect
+      val df = sql(s"""
+        SELECT id, st_intersects(geomA, geomB) AS intersects FROM $table
+      """)
+
+      df.explain(false)
+      df.printSchema()
+      df.show()
+
+      // Verify the results
+      val results = df.collect()
+      assert(results.contains(Row("1", true)))
+      assert(results.contains(Row("2", false)))
     }
   }
 }

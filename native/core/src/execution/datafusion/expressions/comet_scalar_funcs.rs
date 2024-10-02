@@ -20,7 +20,7 @@ use datafusion_comet_spark_expr::scalar_funcs::hash_expressions::{
     spark_sha224, spark_sha256, spark_sha384, spark_sha512,
 };
 use datafusion_comet_spark_expr::scalar_funcs::{spark_ceil, spark_date_add, spark_date_sub, spark_decimal_div, spark_floor, spark_hex, spark_isnan, spark_make_decimal, spark_murmur3_hash, spark_read_side_padding, spark_round, spark_unhex, spark_unscaled_value, spark_xxhash64, SparkChrFunc};
-use datafusion_comet_spark_expr::scalar_funcs::{spark_st_envelope, spark_st_point, spark_st_linestring};
+use datafusion_comet_spark_expr::scalar_funcs::{spark_st_envelope, spark_st_point, spark_st_linestring, spark_st_intersects};
 use datafusion_common::{DataFusionError, Result as DataFusionResult};
 use datafusion_expr::registry::FunctionRegistry;
 use datafusion_expr::{
@@ -66,6 +66,9 @@ pub fn create_comet_physical_fun(
         }
         "st_envelope" => {
             make_comet_scalar_udf!("st_envelope", spark_st_envelope, data_type)
+        }
+        "st_intersects" => {
+            make_comet_scalar_udf!("st_intersects", spark_st_intersects, data_type)
         }
         "ceil" => {
             make_comet_scalar_udf!("ceil", spark_ceil, data_type)

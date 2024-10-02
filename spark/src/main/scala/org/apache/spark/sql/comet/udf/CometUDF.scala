@@ -20,10 +20,10 @@
 package org.apache.spark.sql.comet.udf
 
 import org.apache.spark.sql.{Row, SparkSession}
-import org.apache.spark.sql.api.java.UDF1
+import org.apache.spark.sql.api.java.{UDF1, UDF2}
 import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.sql.functions.udf
-import org.apache.spark.sql.types.{DataTypes, StructField}
+import org.apache.spark.sql.types.{BooleanType, DataTypes, StructField}
 
 class CometUDF {
 
@@ -93,6 +93,29 @@ class CometUDF {
     new UDF1[Row, Row] { override def call(geometry: Row): Row = Row.empty },
     DataTypes.createStructType(GEOMETRY_ENVELOPE))
 
+  /**
+   * This method takes two Rows representing geometries and returns a Boolean indicating whether
+   * the geometries intersect.
+   *
+   * This is a stub implementation that always returns false.
+   *
+   * @param geomA
+   *   A Row containing the first geometry data.
+   * @param geomB
+   *   A Row containing the second geometry data.
+   * @return
+   *   A Boolean indicating whether the geometries intersect.
+   */
+  val st_intersects: UserDefinedFunction = udf(
+    new UDF2[Row, Row, Boolean] {
+      override def call(geomA: Row, geomB: Row): Boolean = {
+        // Implement the logic to check if geomA intersects with geomB
+        // This is a stub implementation
+        false
+      }
+    },
+    BooleanType)
+
   val st_point: UserDefinedFunction = udf(
     new UDF1[Row, Row] { override def call(dummy: Row): Row = Row.empty },
     DataTypes.createStructType(GEOMETRY))
@@ -131,5 +154,6 @@ class CometUDF {
     spark.udf.register("st_polygon", st_polygon)
     spark.udf.register("st_multipolygon", st_multipolygon)
     spark.udf.register("st_envelope", st_envelope)
+    spark.udf.register("st_intersects", st_intersects)
   }
 }

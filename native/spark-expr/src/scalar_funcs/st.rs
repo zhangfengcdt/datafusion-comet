@@ -16,8 +16,8 @@
 // under the License.
 
 use std::sync::Arc;
-use arrow_array::builder::{ArrayBuilder, Float64Builder, ListBuilder, StructBuilder};
-use arrow_array::{Array, ListArray, StringArray, StructArray};
+use arrow_array::builder::{ArrayBuilder, BooleanBuilder, Float64Builder, ListBuilder, StructBuilder};
+use arrow_array::{Array, Float64Array, ListArray, StringArray, StructArray};
 use arrow_schema::{DataType, Field};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::DataFusionError;
@@ -132,6 +132,8 @@ pub fn spark_st_envelope(
             "Expected return type to be a struct".to_string(),
         ));
     }
+
+    // first argument is the geometry
     let value = &args[0];
 
     // Downcast to StructArray to check the "type" field
@@ -285,6 +287,145 @@ fn build_envelope(min_x: f64, max_x: f64, min_y: f64, max_y: f64) -> Result<Colu
     Ok(ColumnarValue::Array(Arc::new(struct_array)))
 }
 
+pub fn spark_st_intersects(
+    args: &[ColumnarValue],
+    _data_type: &DataType,
+) -> Result<ColumnarValue, DataFusionError> {
+    // Ensure there are exactly two arguments
+    if args.len() != 2 {
+        return Err(DataFusionError::Internal(
+            "Expected exactly two arguments".to_string(),
+        ));
+    }
+
+    // Extract the geometries from the arguments
+    let geom1 = &args[0];
+    let geom2 = &args[1];
+
+    // Downcast to StructArray to check the "type" field
+    let struct_array1 = match geom1 {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<StructArray>().unwrap(),
+        _ => return Err(DataFusionError::Internal("Expected struct input for geom1".to_string())),
+    };
+
+    let struct_array2 = match geom2 {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<StructArray>().unwrap(),
+        _ => return Err(DataFusionError::Internal("Expected struct input for geom2".to_string())),
+    };
+
+    // Get the "type" fields
+    let type_array1 = struct_array1
+        .column_by_name("type")
+        .ok_or_else(|| DataFusionError::Internal("Missing 'type' field in geom1".to_string()))?
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+
+    let type_array2 = struct_array2
+        .column_by_name("type")
+        .ok_or_else(|| DataFusionError::Internal("Missing 'type' field in geom2".to_string()))?
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+
+    // Check the geometry types
+    let geometry_type1 = type_array1.value(0);
+    let geometry_type2 = type_array2.value(0);
+
+    // Initialize a BooleanBuilder to store the result
+    let mut boolean_builder = BooleanBuilder::new();
+
+    // Match the geometry types and check for intersection
+    match (geometry_type1, geometry_type2) {
+        ("point", "point") => {
+            // Handle point-point intersection
+            let point_array1 = struct_array1
+                .column_by_name("point")
+                .ok_or_else(|| DataFusionError::Internal("Missing 'point' field in geom1".to_string()))?
+                .as_any()
+                .downcast_ref::<StructArray>()
+                .unwrap();
+
+            let point_array2 = struct_array2
+                .column_by_name("point")
+                .ok_or_else(|| DataFusionError::Internal("Missing 'point' field in geom2".to_string()))?
+                .as_any()
+                .downcast_ref::<StructArray>()
+                .unwrap();
+
+            let intersects = check_point_intersection(point_array1, point_array2);
+            boolean_builder.append_value(intersects);
+        }
+        ("linestring", "linestring") => {
+            // Handle linestring-linestring intersection
+            let linestring_array1 = struct_array1
+                .column_by_name("linestring")
+                .ok_or_else(|| DataFusionError::Internal("Missing 'linestring' field in geom1".to_string()))?
+                .as_any()
+                .downcast_ref::<ListArray>()
+                .unwrap();
+
+            let linestring_array2 = struct_array2
+                .column_by_name("linestring")
+                .ok_or_else(|| DataFusionError::Internal("Missing 'linestring' field in geom2".to_string()))?
+                .as_any()
+                .downcast_ref::<ListArray>()
+                .unwrap();
+
+            let intersects = check_linestring_intersection(linestring_array1, linestring_array2);
+            boolean_builder.append_value(intersects);
+        }
+        // Add more cases for other geometry types as needed
+        _ => return Err(DataFusionError::Internal("Unsupported geometry type combination".to_string())),
+    }
+
+    // Finalize the BooleanArray and return the result
+    let boolean_array = boolean_builder.finish();
+    Ok(ColumnarValue::Array(Arc::new(boolean_array)))
+}
+
+fn check_point_intersection(point_array1: &StructArray, point_array2: &StructArray) -> bool {
+    // Implement the logic to check if two points intersect
+    // For simplicity, assume points intersect if they have the same coordinates
+    let x1_array = point_array1.column(0).as_any().downcast_ref::<Float64Array>().unwrap();
+    let y1_array = point_array1.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+
+    let x2_array = point_array2.column(0).as_any().downcast_ref::<Float64Array>().unwrap();
+    let y2_array = point_array2.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+
+    for k in 0..x1_array.len() {
+        let x = x1_array.value(k);
+        let y = y1_array.value(k);
+
+        for l in 0..x2_array.len() {
+            let x2 = x2_array.value(l);
+            let y2 = y2_array.value(l);
+
+            if x == x2 && y == y2 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn check_linestring_intersection(linestring_array1: &ListArray, linestring_array2: &ListArray) -> bool {
+    // Implement the logic to check if two linestrings intersect
+    // For simplicity, assume linestrings intersect if any of their points intersect
+    for i in 0..linestring_array1.len() {
+        let point_array1_ref = linestring_array1.value(i);
+        let point_struct_array = point_array1_ref.as_any().downcast_ref::<StructArray>().unwrap();
+
+        let point_array2_ref = linestring_array2.value(i);
+        let point_struct_array2 = point_array2_ref.as_any().downcast_ref::<StructArray>().unwrap();
+
+        if check_point_intersection(point_struct_array, point_struct_array2) {
+            return true;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,7 +433,7 @@ mod tests {
     use arrow::datatypes::{DataType, Field};
     use datafusion::physical_plan::ColumnarValue;
     use arrow_array::builder::ListBuilder;
-    use arrow_array::StringArray;
+    use arrow_array::{BooleanArray, StringArray};
 
     #[test]
     fn test_spark_st_envelope() {
@@ -466,6 +607,59 @@ mod tests {
             assert_eq!(result_array.column(0).as_any().downcast_ref::<StringArray>().unwrap().value(0), "linestring"); // "type"
         } else {
             panic!("Expected geometry to be linestring");
+        }
+    }
+
+    #[test]
+    fn test_spark_st_intersects() {
+
+        // Use the helper function to get coordinate fields
+        let coordinate_fields = get_coordinate_fields();
+
+        // Create the builders for the coordinate fields (x, y, z, m)
+        let mut x_builder = Float64Builder::new();
+        let mut y_builder = Float64Builder::new();
+        let mut z_builder = Float64Builder::new();
+        let mut m_builder = Float64Builder::new();
+
+        // Append sample values to the coordinate fields
+        x_builder.append_value(0.0);
+        y_builder.append_value(0.0);
+        z_builder.append_value(0.0);
+        m_builder.append_value(0.0);
+
+        // Create the StructBuilder for the point geometry (with x, y, z, m)
+        let mut point_builder = StructBuilder::new(
+            coordinate_fields.clone(), // Use the coordinate fields
+            vec![
+                Box::new(x_builder) as Box<dyn ArrayBuilder>,
+                Box::new(y_builder),
+                Box::new(z_builder),
+                Box::new(m_builder),
+            ],
+        );
+
+        // Finalize the point (x, y, z, m)
+        point_builder.append(true);
+
+        // Create the ListBuilder for the linestring geometry
+        let mut linestring_builder = ListBuilder::new(point_builder);
+
+        // Append a sample linestring
+        linestring_builder.append(true);
+
+        // Use the build_geometry_linestring function to create the linestring geometry
+        let geom_array = build_geometry_linestring(linestring_builder).unwrap();
+
+        // Call the spark_st_intersects function
+        let result = spark_st_intersects(&[geom_array.clone(), geom_array.clone()], &DataType::Boolean).unwrap();
+
+        // Assert the result is as expected
+        if let ColumnarValue::Array(array) = result {
+            let result_array = array.as_any().downcast_ref::<BooleanArray>().unwrap();
+            assert_eq!(result_array.value(0), true); // Linestrings intersect
+        } else {
+            panic!("Expected array result");
         }
     }
 }

@@ -54,7 +54,7 @@ pub mod hash_expressions;
 mod st;
 mod geometry_helpers;
 
-pub use st::{spark_st_envelope, spark_st_point, spark_st_linestring};
+pub use st::{spark_st_envelope, spark_st_point, spark_st_linestring, spark_st_intersects};
 
 // exposed for benchmark only
 pub use hash_expressions::{spark_murmur3_hash, spark_xxhash64};
