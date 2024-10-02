@@ -21,6 +21,9 @@ use arrow_array::{Array, Float64Array, ListArray, StringArray, StructArray};
 use arrow_schema::{DataType, Field};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::DataFusionError;
+
+use geos::geo_types::{LineString, Polygon, Coord};
+use geos::Geom;
 use crate::scalar_funcs::geometry_helpers::{
     get_coordinate_fields, get_geometry_fields,
     build_geometry_envelope, build_geometry_polygon,
@@ -332,6 +335,28 @@ pub fn spark_st_intersects(
     let geometry_type1 = type_array1.value(0);
     let geometry_type2 = type_array2.value(0);
 
+    //TODO: convert the geometries (geom1, geom2) to Geos objects
+
+    // first we create a Geo object
+    let exterior = LineString(vec![
+        Coord::from((0., 0.)),
+        Coord::from((0., 1.)),
+        Coord::from((1., 1.)),
+    ]);
+    let interiors = vec![
+        LineString(vec![
+            Coord::from((0.1, 0.1)),
+            Coord::from((0.1, 0.9)),
+            Coord::from((0.9, 0.9)),
+        ]),
+    ];
+    let p = Polygon::new(exterior, interiors);
+    // and we can create a Geos geometry from this object
+    let geom: geos::Geometry = (&p).try_into()
+        .expect("failed conversion");
+
+    let is_intersect: bool = geom.intersects(&geom).unwrap();
+
     // Initialize a BooleanBuilder to store the result
     let mut boolean_builder = BooleanBuilder::new();
 
@@ -353,8 +378,8 @@ pub fn spark_st_intersects(
                 .downcast_ref::<StructArray>()
                 .unwrap();
 
-            let intersects = check_point_intersection(point_array1, point_array2);
-            boolean_builder.append_value(intersects);
+            // let intersects = check_point_intersection(point_array1, point_array2);
+            boolean_builder.append_value(is_intersect);
         }
         ("linestring", "linestring") => {
             // Handle linestring-linestring intersection
@@ -372,8 +397,8 @@ pub fn spark_st_intersects(
                 .downcast_ref::<ListArray>()
                 .unwrap();
 
-            let intersects = check_linestring_intersection(linestring_array1, linestring_array2);
-            boolean_builder.append_value(intersects);
+            // let intersects = check_linestring_intersection(linestring_array1, linestring_array2);
+            boolean_builder.append_value(is_intersect);
         }
         // Add more cases for other geometry types as needed
         _ => return Err(DataFusionError::Internal("Unsupported geometry type combination".to_string())),

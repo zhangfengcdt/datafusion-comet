@@ -958,15 +958,12 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "datafusion-physical-expr",
- "geo-types",
- "geojson",
  "geos",
  "num",
  "rand",
  "regex",
  "thiserror",
  "twox-hash",
- "wkt",
 ]
 
 [[package]]
@@ -1514,28 +1511,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "geojson"
-version = "0.24.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5d728c1df1fbf328d74151efe6cb0586f79ee813346ea981add69bd22c9241b"
-dependencies = [
- "geo-types",
- "log",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
 name = "geos"
 version = "9.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "468b7ac7233c0f417b2c161d28b6d1e88c025eaf79303b69e6e1aa40a2ac1367"
 dependencies = [
  "c_vec",
+ "geo-types",
  "geos-sys",
  "libc",
  "num",
+ "wkt",
 ]
 
 [[package]]

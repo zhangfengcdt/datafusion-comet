@@ -39,10 +39,7 @@ chrono-tz = { workspace = true }
 num = { workspace = true }
 regex = { workspace = true }
 thiserror = { workspace = true }
-geojson = { version = "0.24" }
-geo-types = { version = "0.7" }
-wkt = { version = "0.10.3" }
-geos = { version = "9.0.0" }
+geos = { workspace = true }
 
 [dev-dependencies]
 arrow-data = {workspace = true}
