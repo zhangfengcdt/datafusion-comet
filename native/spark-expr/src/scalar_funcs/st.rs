@@ -16,7 +16,7 @@
 // under the License.
 
 use std::sync::Arc;
-use arrow_array::builder::{ArrayBuilder, BooleanBuilder, Float64Builder, ListBuilder, StructBuilder};
+use arrow_array::builder::{ArrayBuilder, BooleanBuilder, Float64Builder, ListBuilder, StringBuilder, StructBuilder};
 use arrow_array::{Array, Float64Array, ListArray, StringArray, StructArray};
 use arrow_schema::{DataType, Field};
 use datafusion::logical_expr::ColumnarValue;
@@ -24,9 +24,16 @@ use datafusion_common::DataFusionError;
 
 use geos::{CoordSeq, Geom, Geometry};
 use crate::scalar_funcs::geometry_helpers::{
-    get_coordinate_fields, get_geometry_fields,
-    build_geometry_envelope, build_geometry_polygon,
-    build_geometry_point, build_geometry_linestring,
+    get_coordinate_fields,
+    get_geometry_fields,
+    build_geometry_envelope,
+    build_geometry_polygon,
+    build_geometry_point,
+    build_geometry_linestring,
+    get_empty_geometry,
+    get_empty_geometry2,
+    get_empty_geometry3,
+    GEOMETRY_TYPE_POINT,
 };
 
 pub fn spark_st_point(
@@ -321,10 +328,25 @@ pub fn spark_st_intersects(
     Ok(ColumnarValue::Array(Arc::new(boolean_array)))
 }
 
-// TODO: The GEOS should accept ColumnarValue as input and return ColumnarValue as output
-// This requires us to register geos::Geometry as a Arrow data type and implement the ArrowArray trait for it
-// which is a bit more involved than the current implementation but will allow us to use GEOS functions directly
-// GeoArrow should be able to support this in the future
+
+/// Converts a `ColumnarValue` containing Arrow arrays to a vector of GEOS `Geometry` objects.
+///
+/// # Arguments
+///
+/// * `geom` - A reference to a `ColumnarValue` which is expected to be an Arrow `StructArray`
+///   containing geometry data.
+///
+/// # Returns
+///
+/// * `Result<Vec<Geometry>, DataFusionError>` - A result containing a vector of GEOS `Geometry`
+///   objects if successful, or a `DataFusionError` if an error occurs.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// * The input `ColumnarValue` is not an Arrow `StructArray`.
+/// * The required fields ("type", "x", "y") are missing or have incorrect types.
+/// * The geometry type is unsupported.
 fn arrow_to_geos(geom: &ColumnarValue) -> Result<Vec<Geometry>, DataFusionError> {
     // Downcast to StructArray to check the "type" field
     let struct_array = match geom {
@@ -418,6 +440,101 @@ fn arrow_to_geos(geom: &ColumnarValue) -> Result<Vec<Geometry>, DataFusionError>
     }
 }
 
+/// Converts a vector of GEOS `Geometry` objects to a `ColumnarValue` containing Arrow arrays.
+///
+/// # Arguments
+///
+/// * `geometries` - A reference to a vector of GEOS `Geometry` objects.
+///
+/// # Returns
+///
+/// * `Result<ColumnarValue, DataFusionError>` - A result containing a `ColumnarValue` with Arrow arrays
+///   if successful, or a `DataFusionError` if an error occurs.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// * The geometry type is unsupported.
+fn geos_to_arrow(geometries: &[Geometry]) -> Result<ColumnarValue, DataFusionError> {
+    let mut geometry_point_builder = create_point_builder();
+
+    for geom in geometries {
+        match geom.geometry_type() {
+            geos::GeometryTypes::Point => {
+                let coords = geom.get_coord_seq().map_err(|e| DataFusionError::Internal(e.to_string()))?;
+                let x = coords.get_x(0).map_err(|e| DataFusionError::Internal(e.to_string()))?;
+                let y = coords.get_y(0).map_err(|e| DataFusionError::Internal(e.to_string()))?;
+                append_point_to_builder(&mut geometry_point_builder, x, y);
+            }
+            _ => return Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
+        }
+    }
+
+    let geometry_array = geometry_point_builder.finish();
+
+    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
+}
+
+fn create_point_builder() -> StructBuilder {
+    let x_builder = Float64Builder::new();
+    let y_builder = Float64Builder::new();
+    let z_builder = Float64Builder::new();
+    let m_builder = Float64Builder::new();
+    let coordinate_fields = get_coordinate_fields();
+
+    let type_builder = StringBuilder::new();
+    let point_builder = StructBuilder::new(
+        coordinate_fields.clone(),
+        vec![
+            Box::new(x_builder) as Box<dyn ArrayBuilder>,
+            Box::new(y_builder),
+            Box::new(z_builder),
+            Box::new(m_builder),
+        ],
+    );
+    let multipoint_builder = get_empty_geometry(coordinate_fields.clone());
+    let linestring_builder = get_empty_geometry(coordinate_fields.clone());
+    let multilinestring_builder = get_empty_geometry2(coordinate_fields.clone());
+    let polygon_builder = get_empty_geometry2(coordinate_fields.clone());
+    let multipolygon_builder = get_empty_geometry3(coordinate_fields.clone());
+
+    let geometry_point_builder = StructBuilder::new(
+        get_geometry_fields(get_coordinate_fields().into()),
+        vec![
+            Box::new(type_builder) as Box<dyn ArrayBuilder>,
+            Box::new(point_builder) as Box<dyn ArrayBuilder>,
+            Box::new(multipoint_builder) as Box<dyn ArrayBuilder>,
+            Box::new(linestring_builder) as Box<dyn ArrayBuilder>,
+            Box::new(multilinestring_builder) as Box<dyn ArrayBuilder>,
+            Box::new(polygon_builder) as Box<dyn ArrayBuilder>,
+            Box::new(multipolygon_builder) as Box<dyn ArrayBuilder>,
+        ],
+    );
+    geometry_point_builder
+}
+
+fn append_point_to_builder(geometry_builder: &mut StructBuilder, x: f64, y: f64) {
+    // populate the type field
+    geometry_builder.field_builder::<StringBuilder>(0).unwrap().append_value(GEOMETRY_TYPE_POINT);
+
+    // populate the point field
+    geometry_builder.field_builder::<StructBuilder>(1).unwrap().field_builder::<Float64Builder>(0).unwrap().append_value(x);
+    geometry_builder.field_builder::<StructBuilder>(1).unwrap().field_builder::<Float64Builder>(1).unwrap().append_value(y);
+    geometry_builder.field_builder::<StructBuilder>(1).unwrap().field_builder::<Float64Builder>(2).unwrap().append_null();
+    geometry_builder.field_builder::<StructBuilder>(1).unwrap().field_builder::<Float64Builder>(3).unwrap().append_null();
+    geometry_builder.field_builder::<StructBuilder>(1).unwrap().append(true);
+
+    // populate all other fields with null
+    geometry_builder.field_builder::<ListBuilder<StructBuilder>>(2).unwrap().append_null();
+    geometry_builder.field_builder::<ListBuilder<StructBuilder>>(3).unwrap().append_null();
+    geometry_builder.field_builder::<ListBuilder<ListBuilder<StructBuilder>>>(4).unwrap().append_null();
+    geometry_builder.field_builder::<ListBuilder<ListBuilder<StructBuilder>>>(5).unwrap().append_null();
+    geometry_builder.field_builder::<ListBuilder<ListBuilder<ListBuilder<StructBuilder>>>>(6).unwrap().append_null();
+
+    // append the geometry to the builder
+    geometry_builder.append(true);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -462,12 +579,7 @@ mod tests {
 
     fn get_multiple_polygon_data() -> ColumnarValue {
         // Define the fields for the struct array
-        let fields = vec![
-            Field::new("x", DataType::Float64, false),
-            Field::new("y", DataType::Float64, false),
-            Field::new("z", DataType::Float64, false),
-            Field::new("m", DataType::Float64, false),
-        ];
+        let fields = get_coordinate_fields();
 
         // Create the inner struct array (with one element: (1.0, 2.0, 3.0, 4.0))
         let mut struct_builder = StructBuilder::new(
@@ -806,5 +918,30 @@ mod tests {
 
         // You can still assert the WKT as before
         assert_eq!(result.get(0).expect("REASON").to_wkt().unwrap(), "LINESTRING (1 3, 2 4, 5 6)");
+    }
+
+    #[test]
+    fn test_geos_to_arrow() {
+        // Create sample Point geometry
+        let coord_seq = CoordSeq::new_from_vec(&[[1.0, 2.0]]).unwrap();
+        let point_geom = Geometry::create_point(coord_seq).unwrap();
+
+        // // Create sample LineString geometry
+        // let coord_seq = CoordSeq::new_from_vec(&[[1.0, 2.0], [3.0, 4.0]]).unwrap();
+        // let linestring_geom = Geometry::create_line_string(coord_seq).unwrap();
+
+        // Convert geometries to ColumnarValue
+        let geometries = vec![Clone::clone(&point_geom),
+                              Clone::clone(&point_geom),
+                              Clone::clone(&point_geom),
+                              Clone::clone(&point_geom)
+        ];
+        let result = geos_to_arrow(&geometries).unwrap();
+        // asser not null
+        if let ColumnarValue::Array(array) = result {
+            assert!(!array.is_empty());
+        } else {
+            panic!("Expected ColumnarValue::Array");
+        }
     }
 }
