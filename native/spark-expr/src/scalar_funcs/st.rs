@@ -22,7 +22,6 @@ use arrow_schema::{DataType, Field};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::DataFusionError;
 
-use geos::geo_types::{LineString, Polygon, Coord};
 use geos::{CoordSeq, Geom, Geometry};
 use crate::scalar_funcs::geometry_helpers::{
     get_coordinate_fields, get_geometry_fields,
@@ -305,62 +304,18 @@ pub fn spark_st_intersects(
     let geom1 = &args[0];
     let geom2 = &args[1];
 
-    // Downcast to StructArray to check the "type" field
-    let struct_array1 = match geom1 {
-        ColumnarValue::Array(array) => array.as_any().downcast_ref::<StructArray>().unwrap(),
-        _ => return Err(DataFusionError::Internal("Expected struct input for geom1".to_string())),
-    };
+    // Call the geometry_to_geos function
+    let geos_geom_array1 = arrow_to_geos(&geom1).unwrap();
+    let geos_geom_array2 = arrow_to_geos(&geom2).unwrap();
 
-    let struct_array2 = match geom2 {
-        ColumnarValue::Array(array) => array.as_any().downcast_ref::<StructArray>().unwrap(),
-        _ => return Err(DataFusionError::Internal("Expected struct input for geom2".to_string())),
-    };
-
-    // Get the "type" fields
-    let type_array1 = struct_array1
-        .column_by_name("type")
-        .ok_or_else(|| DataFusionError::Internal("Missing 'type' field in geom1".to_string()))?
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .unwrap();
-
-    let type_array2 = struct_array2
-        .column_by_name("type")
-        .ok_or_else(|| DataFusionError::Internal("Missing 'type' field in geom2".to_string()))?
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .unwrap();
-
-    // Check the geometry types
-    let geometry_type1 = type_array1.value(0);
-    let geometry_type2 = type_array2.value(0);
-
-    //TODO: convert the geometries (geom1, geom2) to Geos objects
-
-    // first we create a Geo object
-    let exterior = LineString(vec![
-        Coord::from((0., 0.)),
-        Coord::from((0., 1.)),
-        Coord::from((1., 1.)),
-    ]);
-    let interiors = vec![
-        LineString(vec![
-            Coord::from((0.1, 0.1)),
-            Coord::from((0.1, 0.9)),
-            Coord::from((0.9, 0.9)),
-        ]),
-    ];
-    let p = Polygon::new(exterior, interiors);
-    // and we can create a Geos geometry from this object
-    let geom: geos::Geometry = (&p).try_into()
-        .expect("failed conversion");
-
-    let is_intersect: bool = geom.intersects(&geom).unwrap();
-
-    // Initialize a BooleanBuilder to store the result
+    // Call the intersects function on the geometries from array1 and array2 on each element
     let mut boolean_builder = BooleanBuilder::new();
-    boolean_builder.append_value(is_intersect);
-
+    for i in 0..geos_geom_array1.len() {
+        let geom1 = &geos_geom_array1[i];
+        let geom2 = &geos_geom_array2[i];
+        let intersects = geom1.intersects(geom2).unwrap();
+        boolean_builder.append_value(intersects);
+    }
     // Finalize the BooleanArray and return the result
     let boolean_array = boolean_builder.finish();
     Ok(ColumnarValue::Array(Arc::new(boolean_array)))
@@ -659,11 +614,23 @@ mod tests {
         let mut z_builder = Float64Builder::new();
         let mut m_builder = Float64Builder::new();
 
-        // Append sample values to the coordinate fields
-        x_builder.append_value(0.0);
-        y_builder.append_value(0.0);
-        z_builder.append_value(0.0);
-        m_builder.append_value(0.0);
+        // Append sample values to the coordinate fields for multiple points
+        x_builder.append_value(1.0);
+        y_builder.append_value(3.0);
+        z_builder.append_value(1.0);
+        m_builder.append_value(3.0);
+
+        // Append another point (example: x=2, y=4, z=2, m=4)
+        x_builder.append_value(2.0);
+        y_builder.append_value(4.0);
+        z_builder.append_value(2.0);
+        m_builder.append_value(4.0);
+
+        // Append more points if needed
+        x_builder.append_value(5.0);
+        y_builder.append_value(6.0);
+        z_builder.append_value(5.0);
+        m_builder.append_value(6.0);
 
         // Create the StructBuilder for the point geometry (with x, y, z, m)
         let mut point_builder = StructBuilder::new(
@@ -676,13 +643,15 @@ mod tests {
             ],
         );
 
-        // Finalize the point (x, y, z, m)
-        point_builder.append(true);
+        // Finalize each point (you can call append multiple times for multiple points)
+        point_builder.append(true); // For the first point
+        point_builder.append(true); // For the second point
+        point_builder.append(true); // For the third point
 
         // Create the ListBuilder for the linestring geometry
         let mut linestring_builder = ListBuilder::new(point_builder);
 
-        // Append a sample linestring
+        // Append the linestring with the points
         linestring_builder.append(true);
 
         // Use the build_geometry_linestring function to create the linestring geometry
