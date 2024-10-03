@@ -26,6 +26,19 @@ import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 
 class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
 
+  // Define the constant string for the geometry type
+  val GEOMETRY_SQLTYPE: String = """
+    STRUCT<
+          type: STRING,
+          point: STRUCT<x: DOUBLE, y: DOUBLE, z: DOUBLE, m: DOUBLE>,
+          multipoint: ARRAY<STRUCT<x: DOUBLE, y: DOUBLE, z: DOUBLE, m: DOUBLE>>,
+          linestring: ARRAY<STRUCT<x: DOUBLE, y: DOUBLE, z: DOUBLE, m: DOUBLE>>,
+          multilinestring: ARRAY<ARRAY<STRUCT<x: DOUBLE, y: DOUBLE, z: DOUBLE, m: DOUBLE>>>,
+          polygon: ARRAY<ARRAY<STRUCT<x: DOUBLE, y: DOUBLE, z: DOUBLE, m: DOUBLE>>>,
+          multipolygon: ARRAY<ARRAY<ARRAY<STRUCT<x: DOUBLE, y: DOUBLE, z: DOUBLE, m: DOUBLE>>>>
+        >
+  """
+
   test("basic udf support") {
     val table = "test"
     val tableLocation = s"/Users/feng/github/datafusion-comet/spark-warehouse/$table"
@@ -41,73 +54,40 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
         directory.deleteRecursively() // Delete the existing directory
       }
 
-      // Create a table with a nested geometry column (array<array<array<struct<x: double, y: double, z: double, m: double>>>)
+      // Create a table with the new schema using decimal types
       sql(s"""
-  CREATE TABLE $table (
-    place_name STRING,
-    place_info STRUCT<type: STRING, city: STRING>,
-    rating DOUBLE,
-    geometry3 ARRAY<ARRAY<ARRAY<STRUCT<x: DOUBLE, y: DOUBLE, z: DOUBLE, m: DOUBLE>>>>,
-    geometry2 ARRAY<ARRAY<STRUCT<x: DOUBLE, y: DOUBLE, z: DOUBLE, m: DOUBLE>>>,
-    geometry1 ARRAY<STRUCT<x: DOUBLE, y: DOUBLE, z: DOUBLE, m: DOUBLE>>,
-    geometry STRUCT<x: DOUBLE, y: DOUBLE, z: DOUBLE, m: DOUBLE>,
-    geometry_type STRING
-  )
-  USING PARQUET
-""")
+        CREATE TABLE $table (
+          place_name STRING,
+          rating DOUBLE,
+          geometry $GEOMETRY_SQLTYPE
+        )
+        USING PARQUET
+      """)
 
       // Insert some values into the table
       sql(s"""
-  INSERT INTO $table VALUES (
-    'Central Park',
-    struct('Park', 'New York'),
-    4.7,
-    array(array(array(named_struct('x', 40.785091, 'y', -73.968285, 'z', 10.0, 'm', 0.0)))),
-    array(array(named_struct('x', 40.785091, 'y', -73.968285, 'z', 10.0, 'm', 0.0))),
-    array(named_struct('x', 40.785091, 'y', -73.968285, 'z', 10.0, 'm', 0.0)),
-    named_struct('x', 40.785091, 'y', -73.968285, 'z', 10.0, 'm', 0.0),
-    'Polygon'
-  )
-""")
-
-      sql(s"""
-  INSERT INTO $table VALUES (
-    'Golden Gate Bridge',
-    struct('Bridge', 'San Francisco'),
-    4.9,
-    array(array(array(named_struct('x', 37.8199286, 'y', -122.4782551, 'z', 75.0, 'm', 20.0)))),
-    array(array(named_struct('x', 37.8199286, 'y', -122.4782551, 'z', 75.0, 'm', 20.0))),
-    array(named_struct('x', 37.8199286, 'y', -122.4782551, 'z', 75.0, 'm', 20.0)),
-    named_struct('x', 37.8199286, 'y', -122.4782551, 'z', 75.0, 'm', 20.0),
-    'Line'
-  )
-""")
-
-      sql(s"""
-  INSERT INTO $table VALUES (
-    'Space Needle',
-    struct('Landmark', 'Seattle'),
-    4.8,
-    array(array(array(named_struct('x', 47.620422, 'y', -122.349358, 'z', 184.0, 'm', 0.0)))),
-    array(array(named_struct('x', 47.620422, 'y', -122.349358, 'z', 184.0, 'm', 0.0))),
-    array(named_struct('x', 47.620422, 'y', -122.349358, 'z', 184.0, 'm', 0.0)),
-    named_struct('x', 47.620422, 'y', -122.349358, 'z', 184.0, 'm', 0.0),
-    'Point'
+  INSERT INTO test VALUES (
+    'LA',
+    100.0,
+    named_struct(
+      'type', 'Point',
+      'point', named_struct('x', 1.0, 'y', 1.0, 'z', 0.0, 'm', 0.0),
+      'multipoint', array(),
+      'linestring', array(),
+      'multilinestring', array(),
+      'polygon', array(),
+      'multipolygon', array()
+    )
   )
 """)
 
       sql(s"select st_point(0) from $table").printSchema()
 
       val df =
-//        sql(
-//          s"select envelope.xmin, envelope.ymin, envelope.xmax, envelope.ymax from (SELECT st_envelope(geometry3) AS envelope from $table)")
-
         sql(s"select pt.x, pt.y, pt.z, pt.m from (SELECT st_point(0).point as pt from $table)")
 
       df.explain(false)
-
       df.printSchema()
-
       df.show()
     }
   }
@@ -127,37 +107,89 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
         directory.deleteRecursively() // Delete the existing directory
       }
 
-      // Create a table with geometry columns
+      // Create a table with the new schema
       sql(s"""
-        CREATE TABLE $table (
-          id STRING,
-          geomA STRUCT<type: STRING, point: STRUCT<x: DOUBLE, y: DOUBLE>>,
-          geomB STRUCT<type: STRING, point: STRUCT<x: DOUBLE, y: DOUBLE>>
-        )
-        USING PARQUET
-      """)
+      CREATE TABLE $table (
+        id STRING,
+        geomA $GEOMETRY_SQLTYPE,
+        geomB $GEOMETRY_SQLTYPE
+      )
+      USING PARQUET
+    """)
 
       // Insert some values into the table
       sql(s"""
-        INSERT INTO $table VALUES (
-          '1',
-          named_struct('type', 'Point', 'point', named_struct('x', 1.0, 'y', 1.0)),
-          named_struct('type', 'Point', 'point', named_struct('x', 1.0, 'y', 1.0))
-        )
-      """)
+  INSERT INTO $table VALUES (
+    '1',
+    named_struct(
+      'type', 'point',
+      'point', named_struct(
+        'x', 1.0,
+        'y', 1.0,
+        'z', 0.0,
+        'm', 0.0
+      ),
+      'multipoint', array(),
+      'linestring', array(),
+      'multilinestring', array(),
+      'polygon', array(),
+      'multipolygon', array()
+    ),
+    named_struct(
+      'type', 'point',
+      'point', named_struct(
+        'x', 1.0,
+        'y', 1.0,
+        'z', 0.0,
+        'm', 0.0
+      ),
+      'multipoint', array(),
+      'linestring', array(),
+      'multilinestring', array(),
+      'polygon', array(),
+      'multipolygon', array()
+    )
+  )
+""")
 
       sql(s"""
-        INSERT INTO $table VALUES (
-          '2',
-          named_struct('type', 'Point', 'point', named_struct('x', 1.0, 'y', 1.0)),
-          named_struct('type', 'Point', 'point', named_struct('x', 2.0, 'y', 2.0))
-        )
-      """)
+  INSERT INTO $table VALUES (
+    '2',
+    named_struct(
+      'type', 'point',
+      'point', named_struct(
+        'x', 1.0,
+        'y', 1.0,
+        'z', 0.0,
+        'm', 0.0
+      ),
+      'multipoint', array(),
+      'linestring', array(),
+      'multilinestring', array(),
+      'polygon', array(),
+      'multipolygon', array()
+    ),
+    named_struct(
+      'type', 'point',
+      'point', named_struct(
+        'x', 2.0,
+        'y', 2.0,
+        'z', 0.0,
+        'm', 0.0
+      ),
+      'multipoint', array(),
+      'linestring', array(),
+      'multilinestring', array(),
+      'polygon', array(),
+      'multipolygon', array()
+    )
+  )
+""")
 
       // Use the st_intersects UDF to check if the geometries intersect
       val df = sql(s"""
-        SELECT id, st_intersects(geomA, geomB) AS intersects FROM $table
-      """)
+      SELECT id, st_intersects(geomA, geomB) AS intersects FROM $table
+    """)
 
       df.explain(false)
       df.printSchema()

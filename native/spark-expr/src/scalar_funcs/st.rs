@@ -670,6 +670,52 @@ mod tests {
     }
 
     #[test]
+    fn test_spark_st_intersects_with_points() {
+        // Use the helper function to get coordinate fields
+        let coordinate_fields = get_coordinate_fields();
+
+        // Create the builders for the coordinate fields (x, y, z, m)
+        let mut x_builder = Float64Builder::new();
+        let mut y_builder = Float64Builder::new();
+        let mut z_builder = Float64Builder::new();
+        let mut m_builder = Float64Builder::new();
+
+        // Append sample values to the coordinate fields for multiple points
+        x_builder.append_value(1.0);
+        y_builder.append_value(3.0);
+        z_builder.append_value(1.0);
+        m_builder.append_value(3.0);
+
+        // Create the StructBuilder for the point geometry (with x, y, z, m)
+        let mut point_builder = StructBuilder::new(
+            coordinate_fields.clone(),
+            vec![
+                Box::new(x_builder) as Box<dyn ArrayBuilder>,
+                Box::new(y_builder),
+                Box::new(z_builder),
+                Box::new(m_builder),
+            ],
+        );
+
+        // Finalize each point (you can call append multiple times for multiple points)
+        point_builder.append(true); // For the first point
+
+        // Use the build_geometry_point function to create the point geometry
+        let geom_array = build_geometry_point(point_builder).unwrap();
+
+        // Call the spark_st_intersects function
+        let result = spark_st_intersects(&[geom_array.clone(), geom_array.clone()], &DataType::Boolean).unwrap();
+
+        // Assert the result is as expected
+        if let ColumnarValue::Array(array) = result {
+            let result_array = array.as_any().downcast_ref::<BooleanArray>().unwrap();
+            assert_eq!(result_array.value(0), true); // First point intersects with itself
+        } else {
+            panic!("Expected array result");
+        }
+    }
+
+    #[test]
     fn test_geometry_to_geos_linestring() {
         // Use the helper function to get coordinate fields
         let coordinate_fields = get_coordinate_fields();
