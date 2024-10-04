@@ -28,12 +28,10 @@ use crate::scalar_funcs::geometry_helpers::{
     get_geometry_fields,
     append_point,
     append_linestring,
+    create_geometry_builder,
 };
 
-use crate::scalar_funcs::geos_helpers::{
-    arrow_to_geos,
-    create_geometry_builder
-};
+use crate::scalar_funcs::geos_helpers::{arrow_to_geos};
 
 pub fn spark_st_point(
     _args: &[ColumnarValue],

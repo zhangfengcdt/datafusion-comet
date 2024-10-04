@@ -117,7 +117,7 @@ pub fn get_geometry_fields(coordinate_fields: Vec<Field>) -> Vec<Field> {
 /// # Returns
 ///
 /// * `GenericListBuilder<i32, StructBuilder>` - A `GenericListBuilder` configured for building a list of points.
-pub fn get_list_of_points_schema(coordinate_fields: Vec<Field>) -> GenericListBuilder<i32, StructBuilder> {
+fn get_list_of_points_schema(coordinate_fields: Vec<Field>) -> GenericListBuilder<i32, StructBuilder> {
     // Create the ListBuilder for the multipoint geometry (with x, y, z, m)
     let multipoint_builder = ListBuilder::new(StructBuilder::new(
         coordinate_fields.clone(), // Use the coordinate fields
@@ -144,7 +144,7 @@ pub fn get_list_of_points_schema(coordinate_fields: Vec<Field>) -> GenericListBu
 /// # Returns
 ///
 /// * `GenericListBuilder<i32, ListBuilder<StructBuilder>>` - A `GenericListBuilder` configured for building a list of lists of points.
-pub fn get_list_of_list_of_points_schema(coordinate_fields: Vec<Field>) -> GenericListBuilder<i32, ListBuilder<StructBuilder>> {
+fn get_list_of_list_of_points_schema(coordinate_fields: Vec<Field>) -> GenericListBuilder<i32, ListBuilder<StructBuilder>> {
     // Create the StructBuilder for the innermost geometry (with x, y, z, m)
     let inner_builder = StructBuilder::new(
         coordinate_fields.clone(), // Use the coordinate fields
@@ -177,7 +177,7 @@ pub fn get_list_of_list_of_points_schema(coordinate_fields: Vec<Field>) -> Gener
 /// # Returns
 ///
 /// * `GenericListBuilder<i32, GenericListBuilder<i32, GenericListBuilder<i32, StructBuilder>>>` - A `GenericListBuilder` configured for building a list of lists of lists of points.
-pub fn get_list_of_list_of_list_of_points_schema(coordinate_fields: Vec<Field>) -> GenericListBuilder<i32, GenericListBuilder<i32, GenericListBuilder<i32, StructBuilder>>> {
+fn get_list_of_list_of_list_of_points_schema(coordinate_fields: Vec<Field>) -> GenericListBuilder<i32, GenericListBuilder<i32, GenericListBuilder<i32, StructBuilder>>> {
     // Create the StructBuilder for the innermost geometry (with x, y, z, m)
     let inner_builder = StructBuilder::new(
         coordinate_fields.clone(), // Use the coordinate fields
@@ -199,6 +199,52 @@ pub fn get_list_of_list_of_list_of_points_schema(coordinate_fields: Vec<Field>) 
     let outermost_builder = ListBuilder::new(outer_builder);
 
     outermost_builder
+}
+
+/// Creates a `StructBuilder` for building geometries.
+///
+/// This function initializes a `StructBuilder` with fields for different geometry types,
+/// including point, multipoint, linestring, multilinestring, polygon, and multipolygon.
+///
+/// # Returns
+///
+/// * `StructBuilder` - A `StructBuilder` configured for building geometries.
+pub fn create_geometry_builder() -> StructBuilder {
+    let x_builder = Float64Builder::new();
+    let y_builder = Float64Builder::new();
+    let z_builder = Float64Builder::new();
+    let m_builder = Float64Builder::new();
+    let coordinate_fields = get_coordinate_fields();
+
+    let type_builder = StringBuilder::new();
+    let point_builder = StructBuilder::new(
+        coordinate_fields.clone(),
+        vec![
+            Box::new(x_builder) as Box<dyn ArrayBuilder>,
+            Box::new(y_builder),
+            Box::new(z_builder),
+            Box::new(m_builder),
+        ],
+    );
+    let multipoint_builder = get_list_of_points_schema(coordinate_fields.clone());
+    let linestring_builder = get_list_of_points_schema(coordinate_fields.clone());
+    let multilinestring_builder = get_list_of_list_of_points_schema(coordinate_fields.clone());
+    let polygon_builder = get_list_of_list_of_points_schema(coordinate_fields.clone());
+    let multipolygon_builder = get_list_of_list_of_list_of_points_schema(coordinate_fields.clone());
+
+    let geometry_point_builder = StructBuilder::new(
+        get_geometry_fields(get_coordinate_fields().into()),
+        vec![
+            Box::new(type_builder) as Box<dyn ArrayBuilder>,
+            Box::new(point_builder) as Box<dyn ArrayBuilder>,
+            Box::new(multipoint_builder) as Box<dyn ArrayBuilder>,
+            Box::new(linestring_builder) as Box<dyn ArrayBuilder>,
+            Box::new(multilinestring_builder) as Box<dyn ArrayBuilder>,
+            Box::new(polygon_builder) as Box<dyn ArrayBuilder>,
+            Box::new(multipolygon_builder) as Box<dyn ArrayBuilder>,
+        ],
+    );
+    geometry_point_builder
 }
 
 /// Appends a point geometry to the `StructBuilder`.
