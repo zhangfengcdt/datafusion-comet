@@ -53,6 +53,7 @@ pub use chr::SparkChrFunc;
 pub mod hash_expressions;
 mod st;
 mod geometry_helpers;
+mod geos_helpers;
 
 pub use st::{spark_st_envelope, spark_st_point, spark_st_linestring, spark_st_intersects};
 

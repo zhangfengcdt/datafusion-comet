@@ -15,16 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::sync::Arc;
 use arrow_array::builder::{ArrayBuilder, Float64Builder, GenericListBuilder, ListBuilder, StringBuilder, StructBuilder};
-use arrow_array::{Array, Float64Array, ListArray, StructArray};
 use arrow_schema::{DataType, Field};
-use datafusion::logical_expr::ColumnarValue;
-use datafusion_common::DataFusionError;
 
 pub const GEOMETRY_TYPE_POINT: &str = "point";
 pub const GEOMETRY_TYPE_LINESTRING: &str = "linestring";
-pub const GEOMETRY_TYPE_POLYGON: &str = "polygon";
 
 // Helper function to define the coordinate fields using the expected_fields format
 pub fn get_coordinate_fields() -> Vec<Field> {
@@ -109,168 +104,20 @@ pub fn get_geometry_fields(coordinate_fields: Vec<Field>) -> Vec<Field> {
     ]
 }
 
-pub fn build_geometry_envelope(min_x: &mut f64, max_x: &mut f64, min_y: &mut f64, max_y: &mut f64, array_of_arrays_arrays: &ListArray) {
-    for k in 0..array_of_arrays_arrays.len() {
-        let array_array_array_ref = array_of_arrays_arrays.value(k);
-        let struct_array = array_array_array_ref.as_any().downcast_ref::<StructArray>().unwrap();
 
-        let x_array = struct_array.column(0).as_any().downcast_ref::<Float64Array>().unwrap();
-        let y_array = struct_array.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
-
-        // Find the min and max values of x and y
-        for k in 0..x_array.len() {
-            let x = x_array.value(k);
-            let y = y_array.value(k);
-
-            if x < *min_x {
-                *min_x = x;
-            }
-            if x > *max_x {
-                *max_x = x;
-            }
-            if y < *min_y {
-                *min_y = y;
-            }
-            if y > *max_y {
-                *max_y = y;
-            }
-        }
-    }
-}
-
-pub fn build_geometry_point(point_builder: StructBuilder) -> Result<ColumnarValue, DataFusionError> {
-    // Use the helper function to get coordinate fields
-    let coordinate_fields = get_coordinate_fields();
-
-    // Create the StringBuilder for the "type" field (set as "point")
-    let mut type_builder = StringBuilder::new();
-    type_builder.append_value(GEOMETRY_TYPE_POINT);
-
-    // Use the helper function to get geometry fields based on the coordinate fields
-    let geometry_fields = get_geometry_fields(coordinate_fields.clone().into());
-
-    // Create the StructBuilder for the geometry (type, point, etc.)
-    let mut geometry_builder = StructBuilder::new(
-        geometry_fields.clone(), // Convert Vec<Field> to Arc<[Field]>
-        vec![
-            Box::new(type_builder) as Box<dyn ArrayBuilder>, // "type" field as "point"
-            Box::new(point_builder) as Box<dyn ArrayBuilder>,  // Adding "point" field
-            Box::new(get_empty_geometry(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // Adding "multipoint" field
-            Box::new(get_empty_geometry(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // Adding "linestring" field
-            Box::new(get_empty_geometry2(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // Adding "multilinestring" field
-            Box::new(get_empty_geometry2(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // Adding "polygon" field
-            Box::new(get_empty_geometry3(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // Adding "multipolygon" field
-        ],
-    );
-
-    // Append values to the geometry struct
-    geometry_builder.append(true);
-
-    // Finalize the geometry struct
-    let geometry_array = geometry_builder.finish();
-
-    // Return the geometry as a ColumnarValue
-    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
-}
-
-pub fn build_geometry_linestring(linestring_builder: GenericListBuilder<i32, StructBuilder>) -> Result<ColumnarValue, DataFusionError> {
-    // Use the helper function to get coordinate fields
-    let coordinate_fields = get_coordinate_fields();
-
-    let mut type_builder = StringBuilder::new();
-    type_builder.append_value(GEOMETRY_TYPE_LINESTRING);
-
-    // Use the helper function to get geometry fields based on the coordinate fields
-    let geometry_fields = get_geometry_fields(coordinate_fields.clone().into());
-
-    // Create the StructBuilder for the geometry (type, point, multipoint, linestring, multilinestring, polygon, multipolygon)
-    let mut geometry_builder = StructBuilder::new(
-        geometry_fields.clone(), // Convert Vec<Field> to Arc<[Field]>
-        vec![
-            Box::new(type_builder) as Box<dyn ArrayBuilder>, // "type" field
-            Box::new(get_empty_point(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "point" field
-            Box::new(get_empty_geometry(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "multipoint" field
-            Box::new(linestring_builder) as Box<dyn ArrayBuilder>,  // "linestring" field
-            Box::new(get_empty_geometry2(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "multilinestring" field
-            Box::new(get_empty_geometry2(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "polygon" field
-            Box::new(get_empty_geometry3(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "multipolygon" field
-        ],
-    );
-
-    // Append values to the geometry struct
-    geometry_builder.append(true);
-
-    // Finalize the geometry struct
-    let geometry_array = geometry_builder.finish();
-
-    // Return the geometry as a ColumnarValue
-    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
-}
-
-pub fn build_geometry_polygon(polygon_builder: GenericListBuilder<i32, ListBuilder<StructBuilder>>) -> Result<ColumnarValue, DataFusionError> {
-    // Use the helper function to get coordinate fields
-    let coordinate_fields = get_coordinate_fields();
-
-    let mut type_builder = StringBuilder::new();
-    type_builder.append_value(GEOMETRY_TYPE_POLYGON);
-
-    // Use the helper function to get geometry fields based on the coordinate fields
-    let geometry_fields = get_geometry_fields(coordinate_fields.clone().into());
-
-    // Create the StructBuilder for the geometry (type, point, multipoint, linestring, multilinestring, polygon, multipolygon)
-    let mut geometry_builder = StructBuilder::new(
-        geometry_fields.clone(), // Convert Vec<Field> to Arc<[Field]>
-        vec![
-            Box::new(type_builder) as Box<dyn ArrayBuilder>, // "type" field
-            Box::new(get_empty_point(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "point" field
-            Box::new(get_empty_geometry(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "multipoint" field
-            Box::new(get_empty_geometry(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "linestring" field
-            Box::new(get_empty_geometry2(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "multilinestring" field
-            Box::new(polygon_builder) as Box<dyn ArrayBuilder>,  // "polygon" field
-            Box::new(get_empty_geometry3(coordinate_fields.clone())) as Box<dyn ArrayBuilder>,  // "multipolygon" field
-        ],
-    );
-
-    // Append values to the geometry struct
-    geometry_builder.append(true);
-
-    // Finalize the geometry struct
-    let geometry_array = geometry_builder.finish();
-
-    // Return the geometry as a ColumnarValue
-    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
-}
-
-pub fn get_empty_point(coordinate_fields: Vec<Field>) -> StructBuilder {
-    // Create the builders for the coordinate fields (x, y, z, m)
-    let mut x_builder = Float64Builder::new();
-    let mut y_builder = Float64Builder::new();
-    let mut z_builder = Float64Builder::new();
-    let mut m_builder = Float64Builder::new();
-
-    // Append sample values to the coordinate fields
-    x_builder.append_value(0.0);
-    y_builder.append_value(0.0);
-    z_builder.append_value(0.0);
-    m_builder.append_value(0.0);
-
-    // Create the StructBuilder for the point geometry (with x, y, z, m)
-    let mut point_builder = StructBuilder::new(
-        coordinate_fields.clone(), // Use the coordinate fields
-        vec![
-            Box::new(x_builder) as Box<dyn ArrayBuilder>,
-            Box::new(y_builder),
-            Box::new(z_builder),
-            Box::new(m_builder),
-        ],
-    );
-
-    // Finalize the point (x, y, z, m)
-    point_builder.append_null();
-    point_builder
-}
-
-pub fn get_empty_geometry(coordinate_fields: Vec<Field>) -> GenericListBuilder<i32, StructBuilder> {
+/// Creates a `GenericListBuilder` for building a list of points.
+///
+/// This function initializes a `GenericListBuilder` with fields for the coordinates (x, y, z, m)
+/// and returns it. This builder is used for constructing multipoint geometries.
+///
+/// # Arguments
+///
+/// * `coordinate_fields` - A vector of `Field` objects representing the coordinate fields.
+///
+/// # Returns
+///
+/// * `GenericListBuilder<i32, StructBuilder>` - A `GenericListBuilder` configured for building a list of points.
+pub fn get_list_of_points_schema(coordinate_fields: Vec<Field>) -> GenericListBuilder<i32, StructBuilder> {
     // Create the ListBuilder for the multipoint geometry (with x, y, z, m)
     let multipoint_builder = ListBuilder::new(StructBuilder::new(
         coordinate_fields.clone(), // Use the coordinate fields
@@ -285,7 +132,19 @@ pub fn get_empty_geometry(coordinate_fields: Vec<Field>) -> GenericListBuilder<i
     multipoint_builder
 }
 
-pub fn get_empty_geometry2(coordinate_fields: Vec<Field>) -> GenericListBuilder<i32, ListBuilder<StructBuilder>> {
+/// Creates a `GenericListBuilder` for building a list of lists of points.
+///
+/// This function initializes a `GenericListBuilder` with fields for the coordinates (x, y, z, m)
+/// and returns it. This builder is used for constructing multilinestring and polygon geometries.
+///
+/// # Arguments
+///
+/// * `coordinate_fields` - A vector of `Field` objects representing the coordinate fields.
+///
+/// # Returns
+///
+/// * `GenericListBuilder<i32, ListBuilder<StructBuilder>>` - A `GenericListBuilder` configured for building a list of lists of points.
+pub fn get_list_of_list_of_points_schema(coordinate_fields: Vec<Field>) -> GenericListBuilder<i32, ListBuilder<StructBuilder>> {
     // Create the StructBuilder for the innermost geometry (with x, y, z, m)
     let inner_builder = StructBuilder::new(
         coordinate_fields.clone(), // Use the coordinate fields
@@ -306,7 +165,19 @@ pub fn get_empty_geometry2(coordinate_fields: Vec<Field>) -> GenericListBuilder<
     outer_builder
 }
 
-pub fn get_empty_geometry3(coordinate_fields: Vec<Field>) -> GenericListBuilder<i32, GenericListBuilder<i32, GenericListBuilder<i32, StructBuilder>>> {
+/// Creates a `GenericListBuilder` for building a list of lists of lists of points.
+///
+/// This function initializes a `GenericListBuilder` with fields for the coordinates (x, y, z, m)
+/// and returns it. This builder is used for constructing multipolygon geometries.
+///
+/// # Arguments
+///
+/// * `coordinate_fields` - A vector of `Field` objects representing the coordinate fields.
+///
+/// # Returns
+///
+/// * `GenericListBuilder<i32, GenericListBuilder<i32, GenericListBuilder<i32, StructBuilder>>>` - A `GenericListBuilder` configured for building a list of lists of lists of points.
+pub fn get_list_of_list_of_list_of_points_schema(coordinate_fields: Vec<Field>) -> GenericListBuilder<i32, GenericListBuilder<i32, GenericListBuilder<i32, StructBuilder>>> {
     // Create the StructBuilder for the innermost geometry (with x, y, z, m)
     let inner_builder = StructBuilder::new(
         coordinate_fields.clone(), // Use the coordinate fields
@@ -329,3 +200,80 @@ pub fn get_empty_geometry3(coordinate_fields: Vec<Field>) -> GenericListBuilder<
 
     outermost_builder
 }
+
+/// Appends a point geometry to the `StructBuilder`.
+///
+/// This function populates the `StructBuilder` with the given x and y coordinates for a point geometry.
+/// It also sets the type field to "point" and populates other fields with null values.
+///
+/// # Arguments
+///
+/// * `geometry_builder` - A mutable reference to the `StructBuilder` used for building geometries.
+/// * `x` - The x-coordinate of the point.
+/// * `y` - The y-coordinate of the point.
+pub fn append_point(geometry_builder: &mut StructBuilder, x: f64, y: f64) {
+    // populate the type field
+    geometry_builder.field_builder::<StringBuilder>(0).unwrap().append_value(GEOMETRY_TYPE_POINT);
+
+    // populate the point field
+    geometry_builder.field_builder::<StructBuilder>(1).unwrap().field_builder::<Float64Builder>(0).unwrap().append_value(x);
+    geometry_builder.field_builder::<StructBuilder>(1).unwrap().field_builder::<Float64Builder>(1).unwrap().append_value(y);
+    geometry_builder.field_builder::<StructBuilder>(1).unwrap().field_builder::<Float64Builder>(2).unwrap().append_null();
+    geometry_builder.field_builder::<StructBuilder>(1).unwrap().field_builder::<Float64Builder>(3).unwrap().append_null();
+    geometry_builder.field_builder::<StructBuilder>(1).unwrap().append(true);
+
+    // populate all other fields with null
+    geometry_builder.field_builder::<ListBuilder<StructBuilder>>(2).unwrap().append_null();
+    geometry_builder.field_builder::<ListBuilder<StructBuilder>>(3).unwrap().append_null();
+    geometry_builder.field_builder::<ListBuilder<ListBuilder<StructBuilder>>>(4).unwrap().append_null();
+    geometry_builder.field_builder::<ListBuilder<ListBuilder<StructBuilder>>>(5).unwrap().append_null();
+    geometry_builder.field_builder::<ListBuilder<ListBuilder<ListBuilder<StructBuilder>>>>(6).unwrap().append_null();
+
+    // append the geometry to the builder
+    geometry_builder.append(true);
+}
+
+/// Appends a linestring geometry to the `StructBuilder`.
+///
+/// This function populates the `StructBuilder` with the given x and y coordinates for a linestring geometry.
+/// It also sets the type field to "linestring" and populates other fields with null values.
+///
+/// # Arguments
+///
+/// * `geometry_builder` - A mutable reference to the `StructBuilder` used for building geometries.
+/// * `x_coords` - A vector of x-coordinates for the linestring.
+/// * `y_coords` - A vector of y-coordinates for the linestring.
+pub fn append_linestring(geometry_builder: &mut StructBuilder, x_coords: Vec<f64>, y_coords: Vec<f64>) {
+    // populate the type and point, and multipoint fields
+    geometry_builder.field_builder::<StringBuilder>(0).unwrap().append_value(GEOMETRY_TYPE_LINESTRING);
+
+    // populate the point field with null
+    geometry_builder.field_builder::<StructBuilder>(1).unwrap().field_builder::<Float64Builder>(0).unwrap().append_null();
+    geometry_builder.field_builder::<StructBuilder>(1).unwrap().field_builder::<Float64Builder>(1).unwrap().append_null();
+    geometry_builder.field_builder::<StructBuilder>(1).unwrap().field_builder::<Float64Builder>(2).unwrap().append_null();
+    geometry_builder.field_builder::<StructBuilder>(1).unwrap().field_builder::<Float64Builder>(3).unwrap().append_null();
+    geometry_builder.field_builder::<StructBuilder>(1).unwrap().append_null();
+
+    let list_builder = geometry_builder.field_builder::<ListBuilder<StructBuilder>>(3).unwrap();
+    for (x, y) in x_coords.iter().zip(y_coords.iter()) {
+        list_builder.values().field_builder::<Float64Builder>(0).unwrap().append_value(*x);
+        list_builder.values().field_builder::<Float64Builder>(1).unwrap().append_value(*y);
+        list_builder.values().field_builder::<Float64Builder>(2).unwrap().append_null();
+        list_builder.values().field_builder::<Float64Builder>(3).unwrap().append_null();
+        // append the point to the struct array
+        list_builder.values().append(true);
+    }
+    // append the struct array to the linestring
+    list_builder.append(true);
+
+    // populate all other fields with null
+    geometry_builder.field_builder::<ListBuilder<StructBuilder>>(2).unwrap().append_null();
+    // geometry_builder.field_builder::<ListBuilder<StructBuilder>>(3).unwrap().append_null();
+    geometry_builder.field_builder::<ListBuilder<ListBuilder<StructBuilder>>>(4).unwrap().append_null();
+    geometry_builder.field_builder::<ListBuilder<ListBuilder<StructBuilder>>>(5).unwrap().append_null();
+    geometry_builder.field_builder::<ListBuilder<ListBuilder<ListBuilder<StructBuilder>>>>(6).unwrap().append_null();
+
+    // append the geometry to the builder
+    geometry_builder.append(true);
+}
+

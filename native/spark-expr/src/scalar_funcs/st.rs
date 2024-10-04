@@ -16,104 +16,47 @@
 // under the License.
 
 use std::sync::Arc;
-use arrow_array::builder::{ArrayBuilder, BooleanBuilder, Float64Builder, ListBuilder, StringBuilder, StructBuilder};
+use arrow_array::builder::{ArrayBuilder, BooleanBuilder, Float64Builder, StructBuilder};
 use arrow_array::{Array, Float64Array, ListArray, StringArray, StructArray};
 use arrow_schema::{DataType, Field};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::DataFusionError;
 
-use geos::{CoordSeq, Geom, Geometry};
+use geos::Geom;
 use crate::scalar_funcs::geometry_helpers::{
     get_coordinate_fields,
     get_geometry_fields,
-    build_geometry_envelope,
-    build_geometry_polygon,
-    build_geometry_point,
-    build_geometry_linestring,
-    get_empty_geometry,
-    get_empty_geometry2,
-    get_empty_geometry3,
-    GEOMETRY_TYPE_POINT,
+    append_point,
+    append_linestring,
+};
+
+use crate::scalar_funcs::geos_helpers::{
+    arrow_to_geos,
+    create_geometry_builder
 };
 
 pub fn spark_st_point(
     _args: &[ColumnarValue],
     _data_type: &DataType,
 ) -> Result<ColumnarValue, DataFusionError> {
-    // Use the helper function to get coordinate fields
-    let coordinate_fields = get_coordinate_fields();
+    let mut geometry_builder = create_geometry_builder();
+    append_point(&mut geometry_builder, 1.0, 2.0);
 
-    // Create the builders for the coordinate fields (x, y, z, m)
-    let mut x_builder = Float64Builder::new();
-    let mut y_builder = Float64Builder::new();
-    let mut z_builder = Float64Builder::new();
-    let mut m_builder = Float64Builder::new();
-
-    // Append sample values to the coordinate fields
-    x_builder.append_value(0.0);
-    y_builder.append_value(0.0);
-    z_builder.append_value(0.0);
-    m_builder.append_value(0.0);
-
-    // Create the StructBuilder for the point geometry (with x, y, z, m)
-    let mut point_builder = StructBuilder::new(
-        coordinate_fields.clone(), // Use the coordinate fields
-        vec![
-            Box::new(x_builder) as Box<dyn ArrayBuilder>,
-            Box::new(y_builder),
-            Box::new(z_builder),
-            Box::new(m_builder),
-        ],
-    );
-
-    // Finalize the point (x, y, z, m)
-    point_builder.append(true);
-
-    // Return the result as a ColumnarValue with the point struct
-    build_geometry_point(point_builder)
+    let geometry_array = geometry_builder.finish();
+    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
 }
 
 pub fn spark_st_linestring(
     _args: &[ColumnarValue],
     _data_type: &DataType,
 ) -> Result<ColumnarValue, DataFusionError> {
-    // Use the helper function to get coordinate fields
-    let coordinate_fields = get_coordinate_fields();
+    let mut geometry_builder = create_geometry_builder();
+    let x_coords = vec![0.0, 1.0];
+    let y_coords = vec![0.0, 1.0];
+    append_linestring(&mut geometry_builder, x_coords, y_coords);
 
-    // Create the builders for the coordinate fields (x, y, z, m)
-    let mut x_builder = Float64Builder::new();
-    let mut y_builder = Float64Builder::new();
-    let mut z_builder = Float64Builder::new();
-    let mut m_builder = Float64Builder::new();
-
-    // Append sample values to the coordinate fields
-    x_builder.append_value(0.0);
-    y_builder.append_value(0.0);
-    z_builder.append_value(0.0);
-    m_builder.append_value(0.0);
-
-    // Create the StructBuilder for the point geometry (with x, y, z, m)
-    let mut point_builder = StructBuilder::new(
-        coordinate_fields.clone(), // Use the coordinate fields
-        vec![
-            Box::new(x_builder) as Box<dyn ArrayBuilder>,
-            Box::new(y_builder),
-            Box::new(z_builder),
-            Box::new(m_builder),
-        ],
-    );
-
-    // Finalize the point (x, y, z, m)
-    point_builder.append(true);
-
-    // Create the ListBuilder for the linestring geometry
-    let mut linestring_builder = ListBuilder::new(point_builder);
-
-    // Append a sample linestring
-    linestring_builder.append(true);
-
-    // Return the result as a ColumnarValue with the linestring struct
-    build_geometry_linestring(linestring_builder)
+    let geometry_array = geometry_builder.finish();
+    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
 }
 
 pub fn spark_st_envelope(
@@ -205,6 +148,35 @@ pub fn spark_st_envelope(
             process_geometry3_envelope(nested_array)
         }
         _ => Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
+    }
+}
+
+pub fn build_geometry_envelope(min_x: &mut f64, max_x: &mut f64, min_y: &mut f64, max_y: &mut f64, array_of_arrays_arrays: &ListArray) {
+    for k in 0..array_of_arrays_arrays.len() {
+        let array_array_array_ref = array_of_arrays_arrays.value(k);
+        let struct_array = array_array_array_ref.as_any().downcast_ref::<StructArray>().unwrap();
+
+        let x_array = struct_array.column(0).as_any().downcast_ref::<Float64Array>().unwrap();
+        let y_array = struct_array.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        // Find the min and max values of x and y
+        for k in 0..x_array.len() {
+            let x = x_array.value(k);
+            let y = y_array.value(k);
+
+            if x < *min_x {
+                *min_x = x;
+            }
+            if x > *max_x {
+                *max_x = x;
+            }
+            if y < *min_y {
+                *min_y = y;
+            }
+            if y > *max_y {
+                *max_y = y;
+            }
+        }
     }
 }
 
@@ -328,228 +300,30 @@ pub fn spark_st_intersects(
     Ok(ColumnarValue::Array(Arc::new(boolean_array)))
 }
 
-
-/// Converts a `ColumnarValue` containing Arrow arrays to a vector of GEOS `Geometry` objects.
-///
-/// # Arguments
-///
-/// * `geom` - A reference to a `ColumnarValue` which is expected to be an Arrow `StructArray`
-///   containing geometry data.
-///
-/// # Returns
-///
-/// * `Result<Vec<Geometry>, DataFusionError>` - A result containing a vector of GEOS `Geometry`
-///   objects if successful, or a `DataFusionError` if an error occurs.
-///
-/// # Errors
-///
-/// This function will return an error if:
-/// * The input `ColumnarValue` is not an Arrow `StructArray`.
-/// * The required fields ("type", "x", "y") are missing or have incorrect types.
-/// * The geometry type is unsupported.
-fn arrow_to_geos(geom: &ColumnarValue) -> Result<Vec<Geometry>, DataFusionError> {
-    // Downcast to StructArray to check the "type" field
-    let struct_array = match geom {
-        ColumnarValue::Array(array) => array.as_any().downcast_ref::<StructArray>().unwrap(),
-        _ => return Err(DataFusionError::Internal("Expected struct input".to_string())),
-    };
-
-    // Get the "type" field
-    let type_array = struct_array
-        .column_by_name("type")
-        .ok_or_else(|| DataFusionError::Internal("Missing 'type' field".to_string()))?
-        .as_any()
-        .downcast_ref::<arrow_array::StringArray>()
-        .unwrap();
-
-    // Check the geometry type
-    let geometry_type = type_array.value(0);
-
-    match geometry_type {
-        "point" => {
-            let point_array = struct_array
-                .column_by_name("point")
-                .ok_or_else(|| DataFusionError::Internal("Missing 'point' field".to_string()))?
-                .as_any()
-                .downcast_ref::<StructArray>()
-                .unwrap();
-
-            let x = point_array
-                .column_by_name("x")
-                .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap()
-                .value(0);
-
-            let y = point_array
-                .column_by_name("y")
-                .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap()
-                .value(0);
-
-            let coord_seq = CoordSeq::new_from_vec(&[[x, y]]).map_err(|e| DataFusionError::Internal(e.to_string()))?;
-            let point_geom = Geometry::create_point(coord_seq).map_err(|e| DataFusionError::Internal(e.to_string()))?;
-            Ok(vec![point_geom])
-        }
-        "linestring" => {
-            let linestring_array = struct_array
-                .column_by_name("linestring")
-                .ok_or_else(|| DataFusionError::Internal("Missing 'linestring' field".to_string()))?
-                .as_any()
-                .downcast_ref::<ListArray>()
-                .unwrap();
-
-            let mut geometries = Vec::new();
-
-            for i in 0..linestring_array.len() {
-                let array_ref = linestring_array.value(i);
-                let point_array = array_ref.as_any().downcast_ref::<StructArray>().unwrap();
-                let x_array = point_array
-                    .column_by_name("x")
-                    .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
-                    .as_any()
-                    .downcast_ref::<Float64Array>()
-                    .unwrap();
-
-                let y_array = point_array
-                    .column_by_name("y")
-                    .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
-                    .as_any()
-                    .downcast_ref::<Float64Array>()
-                    .unwrap();
-
-                let mut coords = Vec::new();
-                for j in 0..x_array.len() {
-                    let x = x_array.value(j);
-                    let y = y_array.value(j);
-                    coords.push((x, y));
-                }
-
-                let coords: Vec<[f64; 2]> = coords.iter().map(|&(x, y)| [x, y]).collect();
-                let coord_seq = CoordSeq::new_from_vec(&coords).map_err(|e| DataFusionError::Internal(e.to_string()))?;
-                let linestring_geom = Geometry::create_line_string(coord_seq).map_err(|e| DataFusionError::Internal(e.to_string()))?;
-                geometries.push(linestring_geom);
-            }
-
-            Ok(geometries)
-        }
-        _ => Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
-    }
-}
-
-/// Converts a vector of GEOS `Geometry` objects to a `ColumnarValue` containing Arrow arrays.
-///
-/// # Arguments
-///
-/// * `geometries` - A reference to a vector of GEOS `Geometry` objects.
-///
-/// # Returns
-///
-/// * `Result<ColumnarValue, DataFusionError>` - A result containing a `ColumnarValue` with Arrow arrays
-///   if successful, or a `DataFusionError` if an error occurs.
-///
-/// # Errors
-///
-/// This function will return an error if:
-/// * The geometry type is unsupported.
-fn geos_to_arrow(geometries: &[Geometry]) -> Result<ColumnarValue, DataFusionError> {
-    let mut geometry_point_builder = create_point_builder();
-
-    for geom in geometries {
-        match geom.geometry_type() {
-            geos::GeometryTypes::Point => {
-                let coords = geom.get_coord_seq().map_err(|e| DataFusionError::Internal(e.to_string()))?;
-                let x = coords.get_x(0).map_err(|e| DataFusionError::Internal(e.to_string()))?;
-                let y = coords.get_y(0).map_err(|e| DataFusionError::Internal(e.to_string()))?;
-                append_point_to_builder(&mut geometry_point_builder, x, y);
-            }
-            _ => return Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
-        }
-    }
-
-    let geometry_array = geometry_point_builder.finish();
-
-    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
-}
-
-fn create_point_builder() -> StructBuilder {
-    let x_builder = Float64Builder::new();
-    let y_builder = Float64Builder::new();
-    let z_builder = Float64Builder::new();
-    let m_builder = Float64Builder::new();
-    let coordinate_fields = get_coordinate_fields();
-
-    let type_builder = StringBuilder::new();
-    let point_builder = StructBuilder::new(
-        coordinate_fields.clone(),
-        vec![
-            Box::new(x_builder) as Box<dyn ArrayBuilder>,
-            Box::new(y_builder),
-            Box::new(z_builder),
-            Box::new(m_builder),
-        ],
-    );
-    let multipoint_builder = get_empty_geometry(coordinate_fields.clone());
-    let linestring_builder = get_empty_geometry(coordinate_fields.clone());
-    let multilinestring_builder = get_empty_geometry2(coordinate_fields.clone());
-    let polygon_builder = get_empty_geometry2(coordinate_fields.clone());
-    let multipolygon_builder = get_empty_geometry3(coordinate_fields.clone());
-
-    let geometry_point_builder = StructBuilder::new(
-        get_geometry_fields(get_coordinate_fields().into()),
-        vec![
-            Box::new(type_builder) as Box<dyn ArrayBuilder>,
-            Box::new(point_builder) as Box<dyn ArrayBuilder>,
-            Box::new(multipoint_builder) as Box<dyn ArrayBuilder>,
-            Box::new(linestring_builder) as Box<dyn ArrayBuilder>,
-            Box::new(multilinestring_builder) as Box<dyn ArrayBuilder>,
-            Box::new(polygon_builder) as Box<dyn ArrayBuilder>,
-            Box::new(multipolygon_builder) as Box<dyn ArrayBuilder>,
-        ],
-    );
-    geometry_point_builder
-}
-
-fn append_point_to_builder(geometry_builder: &mut StructBuilder, x: f64, y: f64) {
-    // populate the type field
-    geometry_builder.field_builder::<StringBuilder>(0).unwrap().append_value(GEOMETRY_TYPE_POINT);
-
-    // populate the point field
-    geometry_builder.field_builder::<StructBuilder>(1).unwrap().field_builder::<Float64Builder>(0).unwrap().append_value(x);
-    geometry_builder.field_builder::<StructBuilder>(1).unwrap().field_builder::<Float64Builder>(1).unwrap().append_value(y);
-    geometry_builder.field_builder::<StructBuilder>(1).unwrap().field_builder::<Float64Builder>(2).unwrap().append_null();
-    geometry_builder.field_builder::<StructBuilder>(1).unwrap().field_builder::<Float64Builder>(3).unwrap().append_null();
-    geometry_builder.field_builder::<StructBuilder>(1).unwrap().append(true);
-
-    // populate all other fields with null
-    geometry_builder.field_builder::<ListBuilder<StructBuilder>>(2).unwrap().append_null();
-    geometry_builder.field_builder::<ListBuilder<StructBuilder>>(3).unwrap().append_null();
-    geometry_builder.field_builder::<ListBuilder<ListBuilder<StructBuilder>>>(4).unwrap().append_null();
-    geometry_builder.field_builder::<ListBuilder<ListBuilder<StructBuilder>>>(5).unwrap().append_null();
-    geometry_builder.field_builder::<ListBuilder<ListBuilder<ListBuilder<StructBuilder>>>>(6).unwrap().append_null();
-
-    // append the geometry to the builder
-    geometry_builder.append(true);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::{Float64Array, StructArray, StructBuilder};
+    use arrow::array::{Float64Array, StructArray};
     use arrow::datatypes::{DataType, Field};
     use datafusion::physical_plan::ColumnarValue;
-    use arrow_array::builder::ListBuilder;
     use arrow_array::{BooleanArray, StringArray};
+    use geos::{CoordSeq, Geometry};
+    use crate::scalar_funcs::geos_helpers::geos_to_arrow;
 
     #[test]
     fn test_spark_st_envelope() {
-        let columnar_value = get_multiple_polygon_data();
+        let mut geometry_builder = create_geometry_builder();
+
+        let x_coords = vec![1.0, 2.0, 5.0];
+        let y_coords = vec![3.0, 4.0, 6.0];
+        append_linestring(&mut geometry_builder, x_coords, y_coords);
+
+        let geom_array = geometry_builder.finish();
+
+        let geometry = ColumnarValue::Array(Arc::new(geom_array.clone()));
 
         // Print the formatted schema
-        if let ColumnarValue::Array(ref array) = columnar_value {
+        if let ColumnarValue::Array(ref array) = geometry {
             let schema = array.data_type();
             print_schema(schema, 0);
         }
@@ -563,92 +337,18 @@ mod tests {
         ].into());
 
         // Call the spark_st_envelope function
-        let result = spark_st_envelope(&[columnar_value], &envelope_data_type).unwrap();
+        let result = spark_st_envelope(&[geometry], &envelope_data_type).unwrap();
 
         // Assert the result is as expected
         if let ColumnarValue::Array(array) = result {
             let result_array = array.as_any().downcast_ref::<StructArray>().unwrap();
             assert_eq!(result_array.column(0).as_any().downcast_ref::<Float64Array>().unwrap().value(0), 1.0); // minX
-            assert_eq!(result_array.column(1).as_any().downcast_ref::<Float64Array>().unwrap().value(0), 2.0); // minY
-            assert_eq!(result_array.column(2).as_any().downcast_ref::<Float64Array>().unwrap().value(0), 1.0); // maxX
-            assert_eq!(result_array.column(3).as_any().downcast_ref::<Float64Array>().unwrap().value(0), 2.0); // maxY
+            assert_eq!(result_array.column(1).as_any().downcast_ref::<Float64Array>().unwrap().value(0), 3.0); // minY
+            assert_eq!(result_array.column(2).as_any().downcast_ref::<Float64Array>().unwrap().value(0), 5.0); // maxX
+            assert_eq!(result_array.column(3).as_any().downcast_ref::<Float64Array>().unwrap().value(0), 6.0); // maxY
         } else {
             panic!("Expected array result");
         }
-    }
-
-    fn get_multiple_polygon_data() -> ColumnarValue {
-        // Define the fields for the struct array
-        let fields = get_coordinate_fields();
-
-        // Create the inner struct array (with one element: (1.0, 2.0, 3.0, 4.0))
-        let mut struct_builder = StructBuilder::new(
-            fields.clone(),
-            vec![
-                Box::new(Float64Builder::new()) as Box<dyn ArrayBuilder>,
-                Box::new(Float64Builder::new()) as Box<dyn ArrayBuilder>,
-                Box::new(Float64Builder::new()) as Box<dyn ArrayBuilder>,
-                Box::new(Float64Builder::new()) as Box<dyn ArrayBuilder>,
-            ],
-        );
-        struct_builder.field_builder::<Float64Builder>(0).unwrap().append_value(1.0);
-        struct_builder.field_builder::<Float64Builder>(1).unwrap().append_value(2.0);
-        struct_builder.field_builder::<Float64Builder>(2).unwrap().append_value(3.0);
-        struct_builder.field_builder::<Float64Builder>(3).unwrap().append_value(4.0);
-        struct_builder.append(true); // Append the struct
-        let struct_array = struct_builder.finish();
-
-        // Create nested list builders to match the expected structure
-        let mut list_builder = ListBuilder::new(ListBuilder::new(StructBuilder::new(
-            fields.clone(),
-            vec![
-                Box::new(Float64Builder::new()) as Box<dyn ArrayBuilder>,
-                Box::new(Float64Builder::new()),
-                Box::new(Float64Builder::new()),
-                Box::new(Float64Builder::new()),
-            ],
-        )));
-
-        // Manually append values from the struct_array into the list builder
-        for i in 0..struct_array.len() {
-            // Retrieve values from the struct_array columns directly
-            let x_value = struct_array.column(0).as_any().downcast_ref::<Float64Array>().unwrap().value(i);
-            let y_value = struct_array.column(1).as_any().downcast_ref::<Float64Array>().unwrap().value(i);
-            let z_value = struct_array.column(2).as_any().downcast_ref::<Float64Array>().unwrap().value(i);
-            let m_value = struct_array.column(3).as_any().downcast_ref::<Float64Array>().unwrap().value(i);
-
-            // Append the x, y, z, m values into the list builder's struct fields
-            list_builder
-                .values()
-                .values()
-                .field_builder::<Float64Builder>(0)
-                .unwrap()
-                .append_value(x_value);
-            list_builder
-                .values()
-                .values()
-                .field_builder::<Float64Builder>(1)
-                .unwrap()
-                .append_value(y_value);
-            list_builder
-                .values()
-                .values()
-                .field_builder::<Float64Builder>(2)
-                .unwrap()
-                .append_value(z_value);
-            list_builder
-                .values()
-                .values()
-                .field_builder::<Float64Builder>(3)
-                .unwrap()
-                .append_value(m_value);
-            list_builder.values().values().append(true);
-            list_builder.values().append(true);
-            list_builder.append(true);
-        }
-
-        // Use the new helper function to build the geometry polygon
-        build_geometry_polygon(list_builder).expect("Failed to build geometry polygon")
     }
 
     /// Helper function to format and print the schema
@@ -716,61 +416,17 @@ mod tests {
 
     #[test]
     fn test_spark_st_intersects() {
+        let mut geometry_builder = create_geometry_builder();
+        let x_coords = vec![1.0, 2.0, 5.0];
+        let y_coords = vec![3.0, 4.0, 6.0];
+        append_linestring(&mut geometry_builder, x_coords, y_coords);
 
-        // Use the helper function to get coordinate fields
-        let coordinate_fields = get_coordinate_fields();
+        let geom_array = geometry_builder.finish();
 
-        // Create the builders for the coordinate fields (x, y, z, m)
-        let mut x_builder = Float64Builder::new();
-        let mut y_builder = Float64Builder::new();
-        let mut z_builder = Float64Builder::new();
-        let mut m_builder = Float64Builder::new();
-
-        // Append sample values to the coordinate fields for multiple points
-        x_builder.append_value(1.0);
-        y_builder.append_value(3.0);
-        z_builder.append_value(1.0);
-        m_builder.append_value(3.0);
-
-        // Append another point (example: x=2, y=4, z=2, m=4)
-        x_builder.append_value(2.0);
-        y_builder.append_value(4.0);
-        z_builder.append_value(2.0);
-        m_builder.append_value(4.0);
-
-        // Append more points if needed
-        x_builder.append_value(5.0);
-        y_builder.append_value(6.0);
-        z_builder.append_value(5.0);
-        m_builder.append_value(6.0);
-
-        // Create the StructBuilder for the point geometry (with x, y, z, m)
-        let mut point_builder = StructBuilder::new(
-            coordinate_fields.clone(), // Use the coordinate fields
-            vec![
-                Box::new(x_builder) as Box<dyn ArrayBuilder>,
-                Box::new(y_builder),
-                Box::new(z_builder),
-                Box::new(m_builder),
-            ],
-        );
-
-        // Finalize each point (you can call append multiple times for multiple points)
-        point_builder.append(true); // For the first point
-        point_builder.append(true); // For the second point
-        point_builder.append(true); // For the third point
-
-        // Create the ListBuilder for the linestring geometry
-        let mut linestring_builder = ListBuilder::new(point_builder);
-
-        // Append the linestring with the points
-        linestring_builder.append(true);
-
-        // Use the build_geometry_linestring function to create the linestring geometry
-        let geom_array = build_geometry_linestring(linestring_builder).unwrap();
+        let geometry = ColumnarValue::Array(Arc::new(geom_array.clone()));
 
         // Call the spark_st_intersects function
-        let result = spark_st_intersects(&[geom_array.clone(), geom_array.clone()], &DataType::Boolean).unwrap();
+        let result = spark_st_intersects(&[geometry.clone(), geometry.clone()], &DataType::Boolean).unwrap();
 
         // Assert the result is as expected
         if let ColumnarValue::Array(array) = result {
@@ -783,37 +439,18 @@ mod tests {
 
     #[test]
     fn test_spark_st_intersects_with_points() {
-        // Use the helper function to get coordinate fields
-        let coordinate_fields = get_coordinate_fields();
 
-        // Create the builders for the coordinate fields (x, y, z, m)
-        let mut x_builder = Float64Builder::new();
-        let mut y_builder = Float64Builder::new();
-        let mut z_builder = Float64Builder::new();
-        let mut m_builder = Float64Builder::new();
+        // Create sample Point geometry
+        let coord_seq = CoordSeq::new_from_vec(&[[1.0, 2.0]]).unwrap();
+        let point_geom = Geometry::create_point(coord_seq).unwrap();
 
-        // Append sample values to the coordinate fields for multiple points
-        x_builder.append_value(1.0);
-        y_builder.append_value(3.0);
-        z_builder.append_value(1.0);
-        m_builder.append_value(3.0);
-
-        // Create the StructBuilder for the point geometry (with x, y, z, m)
-        let mut point_builder = StructBuilder::new(
-            coordinate_fields.clone(),
-            vec![
-                Box::new(x_builder) as Box<dyn ArrayBuilder>,
-                Box::new(y_builder),
-                Box::new(z_builder),
-                Box::new(m_builder),
-            ],
-        );
-
-        // Finalize each point (you can call append multiple times for multiple points)
-        point_builder.append(true); // For the first point
-
-        // Use the build_geometry_point function to create the point geometry
-        let geom_array = build_geometry_point(point_builder).unwrap();
+        // Convert geometries to ColumnarValue
+        let geometries = vec![Clone::clone(&point_geom),
+                              Clone::clone(&point_geom),
+                              Clone::clone(&point_geom),
+                              Clone::clone(&point_geom)
+        ];
+        let geom_array = geos_to_arrow(&geometries).unwrap();
 
         // Call the spark_st_intersects function
         let result = spark_st_intersects(&[geom_array.clone(), geom_array.clone()], &DataType::Boolean).unwrap();
@@ -824,124 +461,6 @@ mod tests {
             assert_eq!(result_array.value(0), true); // First point intersects with itself
         } else {
             panic!("Expected array result");
-        }
-    }
-
-    #[test]
-    fn test_geometry_to_geos_linestring() {
-        // Use the helper function to get coordinate fields
-        let coordinate_fields = get_coordinate_fields();
-
-        // Create the builders for the coordinate fields (x, y, z, m)
-        let mut x_builder = Float64Builder::new();
-        let mut y_builder = Float64Builder::new();
-        let mut z_builder = Float64Builder::new();
-        let mut m_builder = Float64Builder::new();
-
-        // Append sample values to the coordinate fields for multiple points
-        x_builder.append_value(1.0);
-        y_builder.append_value(3.0);
-        z_builder.append_value(1.0);
-        m_builder.append_value(3.0);
-
-        // Append another point (example: x=2, y=4, z=2, m=4)
-        x_builder.append_value(2.0);
-        y_builder.append_value(4.0);
-        z_builder.append_value(2.0);
-        m_builder.append_value(4.0);
-
-        // Append more points if needed
-        x_builder.append_value(5.0);
-        y_builder.append_value(6.0);
-        z_builder.append_value(5.0);
-        m_builder.append_value(6.0);
-
-        // Create the StructBuilder for the point geometry (with x, y, z, m)
-        let mut point_builder = StructBuilder::new(
-            coordinate_fields.clone(), // Use the coordinate fields
-            vec![
-                Box::new(x_builder) as Box<dyn ArrayBuilder>,
-                Box::new(y_builder),
-                Box::new(z_builder),
-                Box::new(m_builder),
-            ],
-        );
-
-        // Finalize each point (you can call append multiple times for multiple points)
-        point_builder.append(true); // For the first point
-        point_builder.append(true); // For the second point
-        point_builder.append(true); // For the third point
-
-        // Create the ListBuilder for the linestring geometry
-        let mut linestring_builder = ListBuilder::new(point_builder);
-
-        // Append the linestring with the points
-        linestring_builder.append(true);
-
-        // Use the build_geometry_linestring function to create the linestring geometry
-        let geom_array = build_geometry_linestring(linestring_builder).unwrap();
-
-        // Check if geom_array is of type ColumnarValue::Array
-        if let ColumnarValue::Array(array) = &geom_array {
-            // Print the data type of the array
-            println!("Data type of geom_array: {:?}", array.data_type());
-
-            // Downcast the array to StructArray
-            if let Some(struct_array) = array.as_any().downcast_ref::<StructArray>() {
-                // Get the "linestring" field
-                let linestring_array = struct_array
-                    .column_by_name("linestring")
-                    .expect("Missing 'linestring' field")
-                    .as_any()
-                    .downcast_ref::<ListArray>()
-                    .expect("Failed to downcast 'linestring' field to ListArray");
-
-                // Print the length of linestring_array
-                println!("Length of linestring_array: {}", linestring_array.len());
-
-                // Downcast the value to StructArray
-                let value_array = linestring_array.value(0);
-                if let Some(points_array) = value_array.as_any().downcast_ref::<StructArray>() {
-                    println!("Number of points in the linestring: {}", points_array.len());
-                } else {
-                    println!("Failed to downcast value_array to StructArray");
-                }
-            } else {
-                println!("Failed to downcast array to StructArray");
-            }
-        } else {
-            println!("geom_array is not of type ColumnarValue::Array");
-        }
-
-        // Call the geometry_to_geos function
-        let result = arrow_to_geos(&geom_array).unwrap();
-
-        // You can still assert the WKT as before
-        assert_eq!(result.get(0).expect("REASON").to_wkt().unwrap(), "LINESTRING (1 3, 2 4, 5 6)");
-    }
-
-    #[test]
-    fn test_geos_to_arrow() {
-        // Create sample Point geometry
-        let coord_seq = CoordSeq::new_from_vec(&[[1.0, 2.0]]).unwrap();
-        let point_geom = Geometry::create_point(coord_seq).unwrap();
-
-        // // Create sample LineString geometry
-        // let coord_seq = CoordSeq::new_from_vec(&[[1.0, 2.0], [3.0, 4.0]]).unwrap();
-        // let linestring_geom = Geometry::create_line_string(coord_seq).unwrap();
-
-        // Convert geometries to ColumnarValue
-        let geometries = vec![Clone::clone(&point_geom),
-                              Clone::clone(&point_geom),
-                              Clone::clone(&point_geom),
-                              Clone::clone(&point_geom)
-        ];
-        let result = geos_to_arrow(&geometries).unwrap();
-        // asser not null
-        if let ColumnarValue::Array(array) = result {
-            assert!(!array.is_empty());
-        } else {
-            panic!("Expected ColumnarValue::Array");
         }
     }
 }
