@@ -23,13 +23,7 @@ use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::DataFusionError;
 
 use geos::Geom;
-use crate::scalar_funcs::geometry_helpers::{
-    get_coordinate_fields,
-    get_geometry_fields,
-    append_point,
-    append_linestring,
-    create_geometry_builder,
-};
+use crate::scalar_funcs::geometry_helpers::{create_point, create_linestring};
 
 use crate::scalar_funcs::geos_helpers::{arrow_to_geos};
 
@@ -37,24 +31,16 @@ pub fn spark_st_point(
     _args: &[ColumnarValue],
     _data_type: &DataType,
 ) -> Result<ColumnarValue, DataFusionError> {
-    let mut geometry_builder = create_geometry_builder();
-    append_point(&mut geometry_builder, 1.0, 2.0);
-
-    let geometry_array = geometry_builder.finish();
-    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
+    // todo: get the x and y coordinates from the arguments
+    create_point(0.0, 0.0)
 }
 
 pub fn spark_st_linestring(
     _args: &[ColumnarValue],
     _data_type: &DataType,
 ) -> Result<ColumnarValue, DataFusionError> {
-    let mut geometry_builder = create_geometry_builder();
-    let x_coords = vec![0.0, 1.0];
-    let y_coords = vec![0.0, 1.0];
-    append_linestring(&mut geometry_builder, x_coords, y_coords);
-
-    let geometry_array = geometry_builder.finish();
-    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
+    // todo: get the x and y coordinates from the arguments
+    create_linestring(vec![0.0, 1.0], vec![0.0, 1.0])
 }
 
 pub fn spark_st_envelope(
@@ -306,6 +292,7 @@ mod tests {
     use datafusion::physical_plan::ColumnarValue;
     use arrow_array::{BooleanArray, StringArray};
     use geos::{CoordSeq, Geometry};
+    use crate::scalar_funcs::geometry_helpers::{append_linestring, create_geometry_builder};
     use crate::scalar_funcs::geos_helpers::geos_to_arrow;
 
     #[test]
@@ -378,12 +365,8 @@ mod tests {
 
     #[test]
     fn test_spark_st_point() {
-        // Define the expected data type for the geometry struct
-        let coordinate_fields = get_coordinate_fields();
-        let geometry_fields = get_geometry_fields(coordinate_fields.clone().into());
-
         // Call the spark_st_point function
-        let result = spark_st_point(&[], &DataType::Struct(geometry_fields.clone().into())).unwrap();
+        let result = spark_st_point(&[], &DataType::Null).unwrap();
 
         // Assert the result is as expected
         if let ColumnarValue::Array(array) = result {
@@ -396,12 +379,8 @@ mod tests {
 
     #[test]
     fn test_spark_st_linestring() {
-        // Define the expected data type for the geometry struct
-        let coordinate_fields = get_coordinate_fields();
-        let geometry_fields = get_geometry_fields(coordinate_fields.clone().into());
-
         // Call the spark_st_linestring function
-        let result = spark_st_linestring(&[], &DataType::Struct(geometry_fields.clone().into())).unwrap();
+        let result = spark_st_linestring(&[], &DataType::Null).unwrap();
 
         // Assert the result is as expected
         if let ColumnarValue::Array(array) = result {
