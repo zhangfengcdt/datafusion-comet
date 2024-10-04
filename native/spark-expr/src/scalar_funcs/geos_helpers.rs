@@ -25,6 +25,12 @@ use crate::scalar_funcs::geometry_helpers::{
     append_point,
     append_linestring,
     create_geometry_builder,
+    GEOMETRY_TYPE_POINT,
+    GEOMETRY_TYPE_MULTIPOINT,
+    GEOMETRY_TYPE_LINESTRING,
+    GEOMETRY_TYPE_MULTILINESTRING,
+    GEOMETRY_TYPE_POLYGON,
+    GEOMETRY_TYPE_MULTIPOLYGON,
 };
 
 /// Converts a `ColumnarValue` containing Arrow arrays to a vector of GEOS `Geometry` objects.
@@ -64,9 +70,9 @@ pub fn arrow_to_geos(geom: &ColumnarValue) -> Result<Vec<Geometry>, DataFusionEr
     let geometry_type = type_array.value(0);
 
     match geometry_type {
-        "point" => {
+        GEOMETRY_TYPE_POINT => {
             let point_array = struct_array
-                .column_by_name("point")
+                .column_by_name(GEOMETRY_TYPE_POINT)
                 .ok_or_else(|| DataFusionError::Internal("Missing 'point' field".to_string()))?
                 .as_any()
                 .downcast_ref::<StructArray>()
@@ -92,9 +98,9 @@ pub fn arrow_to_geos(geom: &ColumnarValue) -> Result<Vec<Geometry>, DataFusionEr
             let point_geom = Geometry::create_point(coord_seq).map_err(|e| DataFusionError::Internal(e.to_string()))?;
             Ok(vec![point_geom])
         }
-        "linestring" => {
+        GEOMETRY_TYPE_LINESTRING => {
             let linestring_array = struct_array
-                .column_by_name("linestring")
+                .column_by_name(GEOMETRY_TYPE_LINESTRING)
                 .ok_or_else(|| DataFusionError::Internal("Missing 'linestring' field".to_string()))?
                 .as_any()
                 .downcast_ref::<ListArray>()
