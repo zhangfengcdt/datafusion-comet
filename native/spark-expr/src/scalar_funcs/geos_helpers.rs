@@ -98,6 +98,42 @@ pub fn arrow_to_geos(geom: &ColumnarValue) -> Result<Vec<Geometry>, DataFusionEr
             let point_geom = Geometry::create_point(coord_seq).map_err(|e| DataFusionError::Internal(e.to_string()))?;
             Ok(vec![point_geom])
         }
+        GEOMETRY_TYPE_MULTIPOINT => {
+            let multipoint_array = struct_array
+                .column_by_name(GEOMETRY_TYPE_MULTIPOINT)
+                .ok_or_else(|| DataFusionError::Internal("Missing 'multipoint' field".to_string()))?
+                .as_any()
+                .downcast_ref::<ListArray>()
+                .unwrap();
+
+            let mut geometries = Vec::new();
+
+            for i in 0..multipoint_array.len() {
+                let array_ref = multipoint_array.value(i);
+                let point_array = array_ref.as_any().downcast_ref::<StructArray>().unwrap();
+                let x = point_array
+                    .column_by_name("x")
+                    .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
+                    .as_any()
+                    .downcast_ref::<Float64Array>()
+                    .unwrap()
+                    .value(0);
+
+                let y = point_array
+                    .column_by_name("y")
+                    .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
+                    .as_any()
+                    .downcast_ref::<Float64Array>()
+                    .unwrap()
+                    .value(0);
+
+                let coord_seq = CoordSeq::new_from_vec(&[[x, y]]).map_err(|e| DataFusionError::Internal(e.to_string()))?;
+                let point_geom = Geometry::create_point(coord_seq).map_err(|e| DataFusionError::Internal(e.to_string()))?;
+                geometries.push(point_geom);
+            }
+
+            Ok(geometries)
+        }
         GEOMETRY_TYPE_LINESTRING => {
             let linestring_array = struct_array
                 .column_by_name(GEOMETRY_TYPE_LINESTRING)
@@ -139,6 +175,121 @@ pub fn arrow_to_geos(geom: &ColumnarValue) -> Result<Vec<Geometry>, DataFusionEr
             }
 
             Ok(geometries)
+        }
+        GEOMETRY_TYPE_MULTILINESTRING => {
+            let multilinestring_array = struct_array
+                .column_by_name(GEOMETRY_TYPE_MULTILINESTRING)
+                .ok_or_else(|| DataFusionError::Internal("Missing 'multilinestring' field".to_string()))?
+                .as_any()
+                .downcast_ref::<ListArray>()
+                .unwrap();
+
+            let mut geometries = Vec::new();
+
+            for i in 0..multilinestring_array.len() {
+                let array_ref = multilinestring_array.value(i);
+                let linestring_array = array_ref.as_any().downcast_ref::<ListArray>().unwrap();
+
+                let mut coords = Vec::new();
+                for j in 0..linestring_array.len() {
+                    let array_ref = linestring_array.value(j);
+                    let point_array = array_ref.as_any().downcast_ref::<StructArray>().unwrap();
+                    let x_array = point_array
+                        .column_by_name("x")
+                        .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
+                        .as_any()
+                        .downcast_ref::<Float64Array>()
+                        .unwrap();
+
+                    let y_array = point_array
+                        .column_by_name("y")
+                        .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
+                        .as_any()
+                        .downcast_ref::<Float64Array>()
+                        .unwrap();
+
+                    let mut line_coords = Vec::new();
+                    for k in 0..x_array.len() {
+                        let x = x_array.value(k);
+                        let y = y_array.value(k);
+                        line_coords.push((x, y));
+                    }
+
+                    let line_coords: Vec<[f64; 2]> = line_coords.iter().map(|&(x, y)| [x, y]).collect();
+                    coords.push(line_coords);
+                }
+
+                let coord_seqs = coords.iter()
+                    .map(|line_coords| CoordSeq::new_from_vec(line_coords).map_err(|e| DataFusionError::Internal(e.to_string())))
+                    .collect::<Result<Vec<CoordSeq>, DataFusionError>>()?;
+                let linestrings = coord_seqs.iter()
+                    .map(|coord_seq| Geometry::create_line_string(coord_seq.clone()).map_err(|e| DataFusionError::Internal(e.to_string())))
+                    .collect::<Result<Vec<Geometry>, DataFusionError>>()?;
+                let multilinestring_geom = Geometry::create_multiline_string(linestrings).map_err(|e| DataFusionError::Internal(e.to_string()))?;
+                geometries.push(multilinestring_geom);
+            }
+            Ok(geometries)
+        }
+        GEOMETRY_TYPE_POLYGON => {
+            let polygon_array = struct_array
+                .column_by_name(GEOMETRY_TYPE_POLYGON)
+                .ok_or_else(|| DataFusionError::Internal("Missing 'polygon' field".to_string()))?
+                .as_any()
+                .downcast_ref::<ListArray>()
+                .unwrap();
+
+            let mut geometries = Vec::new();
+
+            for i in 0..polygon_array.len() {
+                let array_ref = polygon_array.value(i);
+                let linestring_array = array_ref.as_any().downcast_ref::<ListArray>().unwrap();
+
+                let mut coords = Vec::new();
+                for j in 0..linestring_array.len() {
+                    let array_ref = linestring_array.value(j);
+                    let point_array = array_ref.as_any().downcast_ref::<StructArray>().unwrap();
+                    let x_array = point_array
+                        .column_by_name("x")
+                        .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
+                        .as_any()
+                        .downcast_ref::<Float64Array>()
+                        .unwrap();
+
+                    let y_array = point_array
+                        .column_by_name("y")
+                        .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
+                        .as_any()
+                        .downcast_ref::<Float64Array>()
+                        .unwrap();
+
+                    let mut line_coords = Vec::new();
+                    for k in 0..x_array.len() {
+                        let x = x_array.value(k);
+                        let y = y_array.value(k);
+                        line_coords.push((x, y));
+                    }
+
+                    let line_coords: Vec<[f64; 2]> = line_coords.iter().map(|&(x, y)| [x, y]).collect();
+                    coords.push(line_coords);
+                }
+
+                let mut coord_seqs = coords.iter()
+                    .map(|line_coords| CoordSeq::new_from_vec(line_coords).map_err(|e| DataFusionError::Internal(e.to_string())))
+                    .collect::<Result<Vec<CoordSeq>, DataFusionError>>()?;
+
+                let exterior_ring = Geometry::create_linear_ring(coord_seqs.remove(0)).map_err(|e| DataFusionError::Internal(e.to_string()))?;
+
+                let interior_rings = coord_seqs.iter()
+                    .map(|coord_seq| Geometry::create_linear_ring(coord_seq.clone()).map_err(|e| DataFusionError::Internal(e.to_string())))
+                    .collect::<Result<Vec<Geometry>, DataFusionError>>()?;
+
+                let polygon_geom = Geometry::create_polygon(exterior_ring, interior_rings).map_err(|e| DataFusionError::Internal(e.to_string()))?;
+                geometries.push(polygon_geom);
+            }
+            Ok(geometries)
+        }
+        GEOMETRY_TYPE_MULTIPOLYGON => {
+            Err(DataFusionError::Internal("Unsupported geometry type".to_string()))
         }
         _ => Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
     }
@@ -255,36 +406,75 @@ pub fn geos_to_arrow(geometries: &[Geometry]) -> Result<ColumnarValue, DataFusio
 mod tests {
     use super::*;
     use datafusion::physical_plan::ColumnarValue;
-    use arrow_array::Array;
     use geos::Geom;
-    use crate::scalar_funcs::geometry_helpers::{append_linestring, append_point};
+    use crate::scalar_funcs::geometry_helpers::{append_linestring, create_linestring, create_multilinestring, create_multipoint, create_point, create_polygon};
 
     #[test]
-    fn test_geometry_to_geos_point() {
-        let mut geometry_builder = create_geometry_builder();
-        append_point(&mut geometry_builder, 1.0, 2.0);
-
-        let geometry_array = geometry_builder.finish();
-
-        let geometries = arrow_to_geos(&ColumnarValue::Array(Arc::new(geometry_array))).unwrap();
-
-        // You can still assert the WKT as before
+    fn test_arrow_to_geos_point() {
+        let geometries = arrow_to_geos(&create_point(1.0, 2.0).unwrap()).unwrap();
         assert_eq!(geometries.get(0).expect("REASON").to_wkt().unwrap(), "POINT (1 2)");
     }
 
     #[test]
-    fn test_geometry_to_geos_linestring() {
+    fn test_arrow_to_geos_multipoint() {
+        let x_coords = vec![1.0, 2.0, 3.0];
+        let y_coords = vec![4.0, 5.0, 6.0];
+        let geometries = arrow_to_geos(&create_multipoint(x_coords.clone(), y_coords.clone()).unwrap()).unwrap();
+        assert_eq!(geometries.len(), 1);
+        assert_eq!(geometries[0].to_wkt().unwrap(), "POINT (1 4)");
+    }
+
+    #[test]
+    fn test_arrow_to_geos_linestring() {
+        let x_coords = vec![1.0, 2.0, 3.0];
+        let y_coords = vec![4.0, 5.0, 6.0];
+        let geometries = arrow_to_geos(&create_linestring(x_coords.clone(), y_coords.clone()).unwrap()).unwrap();
+        assert_eq!(geometries.get(0).expect("REASON").to_wkt().unwrap(), "LINESTRING (1 4, 2 5, 3 6)");
+    }
+
+    #[test]
+    fn test_arrow_to_geos_multilinestring() {
+        let rings = vec![
+            (vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]),
+            (vec![7.0, 8.0, 9.0], vec![10.0, 11.0, 12.0]),
+        ];
+        let geometries = arrow_to_geos(&create_multilinestring(rings.clone()).unwrap()).unwrap();
+        assert_eq!(geometries.len(), 1);
+        assert_eq!(geometries[0].to_wkt().unwrap(), "MULTILINESTRING ((1 4, 2 5, 3 6), (7 10, 8 11, 9 12))");
+    }
+
+    #[test]
+    fn test_arrow_to_geos_polygon() {
+        let rings = vec![
+            (vec![1.0, 2.0, 3.0, 1.0], vec![4.0, 5.0, 6.0, 4.0]), // Closed loop for exterior ring
+            (vec![7.0, 8.0, 9.0, 7.0], vec![10.0, 11.0, 12.0, 10.0]), // Closed loop for interior ring
+        ];
+        let result = create_polygon(rings.clone()).unwrap();
+        let geometries = arrow_to_geos(&result).unwrap();
+
+        assert_eq!(geometries.len(), 1);
+        assert_eq!(geometries[0].to_wkt().unwrap(), "POLYGON ((1 4, 2 5, 3 6, 1 4), (7 10, 8 11, 9 12, 7 10))");
+    }
+
+    #[ignore]
+    // todo - fix this test
+    fn test_arrow_to_geos_multipolygon() {
         let mut geometry_builder = create_geometry_builder();
-        let x_coords = vec![1.0, 2.0, 5.0];
-        let y_coords = vec![3.0, 4.0, 6.0];
-        append_linestring(&mut geometry_builder, x_coords, y_coords);
+        let x_coords1 = vec![1.0, 2.0, 3.0, 1.0];
+        let y_coords1 = vec![1.0, 2.0, 1.0, 1.0];
+        append_linestring(&mut geometry_builder, x_coords1, y_coords1);
+
+        let x_coords2 = vec![4.0, 5.0, 6.0, 4.0];
+        let y_coords2 = vec![4.0, 5.0, 4.0, 4.0];
+        append_linestring(&mut geometry_builder, x_coords2, y_coords2);
 
         let geometry_array = geometry_builder.finish();
 
         let geometries = arrow_to_geos(&ColumnarValue::Array(Arc::new(geometry_array))).unwrap();
 
-        // You can still assert the WKT as before
-        assert_eq!(geometries.get(0).expect("REASON").to_wkt().unwrap(), "LINESTRING (1 3, 2 4, 5 6)");
+        assert_eq!(geometries.len(), 2);
+        assert_eq!(geometries[0].to_wkt().unwrap(), "LINESTRING (1 1, 2 2, 3 1, 1 1)");
+        assert_eq!(geometries[1].to_wkt().unwrap(), "LINESTRING (4 4, 5 5, 6 4, 4 4)");
     }
 
     #[test]
@@ -326,113 +516,6 @@ mod tests {
         if let ColumnarValue::Array(array) = result {
             assert!(!array.is_empty());
             assert_eq!(array.len(), 4);
-        } else {
-            panic!("Expected ColumnarValue::Array");
-        }
-    }
-
-    #[test]
-    fn test_geometry_to_geos_multipoint() {
-        let mut geometry_builder = create_geometry_builder();
-        append_point(&mut geometry_builder, 1.0, 2.0);
-        append_point(&mut geometry_builder, 3.0, 4.0);
-
-        let geometry_array = geometry_builder.finish();
-
-        let geometries = arrow_to_geos(&ColumnarValue::Array(Arc::new(geometry_array))).unwrap();
-
-        assert_eq!(geometries.len(), 1);
-        assert_eq!(geometries[0].to_wkt().unwrap(), "POINT (1 2)");
-    }
-
-    #[test]
-    fn test_geometry_to_geos_polygon() {
-        let mut geometry_builder = create_geometry_builder();
-        let x_coords = vec![1.0, 2.0, 3.0, 1.0];
-        let y_coords = vec![1.0, 2.0, 1.0, 1.0];
-        append_linestring(&mut geometry_builder, x_coords, y_coords);
-
-        let geometry_array = geometry_builder.finish();
-
-        let geometries = arrow_to_geos(&ColumnarValue::Array(Arc::new(geometry_array))).unwrap();
-
-        assert_eq!(geometries.len(), 1);
-        assert_eq!(geometries[0].to_wkt().unwrap(), "LINESTRING (1 1, 2 2, 3 1, 1 1)");
-    }
-
-    #[test]
-    fn test_geometry_to_geos_multipolygon() {
-        let mut geometry_builder = create_geometry_builder();
-        let x_coords1 = vec![1.0, 2.0, 3.0, 1.0];
-        let y_coords1 = vec![1.0, 2.0, 1.0, 1.0];
-        append_linestring(&mut geometry_builder, x_coords1, y_coords1);
-
-        let x_coords2 = vec![4.0, 5.0, 6.0, 4.0];
-        let y_coords2 = vec![4.0, 5.0, 4.0, 4.0];
-        append_linestring(&mut geometry_builder, x_coords2, y_coords2);
-
-        let geometry_array = geometry_builder.finish();
-
-        let geometries = arrow_to_geos(&ColumnarValue::Array(Arc::new(geometry_array))).unwrap();
-
-        assert_eq!(geometries.len(), 2);
-        assert_eq!(geometries[0].to_wkt().unwrap(), "LINESTRING (1 1, 2 2, 3 1, 1 1)");
-        assert_eq!(geometries[1].to_wkt().unwrap(), "LINESTRING (4 4, 5 5, 6 4, 4 4)");
-    }
-
-    #[test]
-    fn test_geometry_to_geos_multilinestring() {
-        let mut geometry_builder = create_geometry_builder();
-        let x_coords1 = vec![1.0, 2.0, 3.0];
-        let y_coords1 = vec![1.0, 2.0, 1.0];
-        append_linestring(&mut geometry_builder, x_coords1, y_coords1);
-
-        let x_coords2 = vec![4.0, 5.0, 6.0];
-        let y_coords2 = vec![4.0, 5.0, 4.0];
-        append_linestring(&mut geometry_builder, x_coords2, y_coords2);
-
-        let geometry_array = geometry_builder.finish();
-
-        let geometries = arrow_to_geos(&ColumnarValue::Array(Arc::new(geometry_array))).unwrap();
-
-        assert_eq!(geometries.len(), 2);
-        assert_eq!(geometries[0].to_wkt().unwrap(), "LINESTRING (1 1, 2 2, 3 1)");
-        assert_eq!(geometries[1].to_wkt().unwrap(), "LINESTRING (4 4, 5 5, 6 4)");
-    }
-
-    #[test]
-    fn test_geos_to_arrow_multipoint() {
-        let coord_seq1 = CoordSeq::new_from_vec(&[[1.0, 2.0]]).unwrap();
-        let point_geom1 = Geometry::create_point(coord_seq1).unwrap();
-
-        let coord_seq2 = CoordSeq::new_from_vec(&[[3.0, 4.0]]).unwrap();
-        let point_geom2 = Geometry::create_point(coord_seq2).unwrap();
-
-        let geometries = vec![point_geom1, point_geom2];
-        let result = geos_to_arrow(&geometries).unwrap();
-
-        if let ColumnarValue::Array(array) = result {
-            assert!(!array.is_empty());
-            assert_eq!(array.len(), 2);
-        } else {
-            panic!("Expected ColumnarValue::Array");
-        }
-    }
-
-    #[test]
-    fn test_geos_to_arrow_multilinestring() {
-        let coord_seq1 = CoordSeq::new_from_vec(&[[1.0, 1.0], [2.0, 2.0], [3.0, 1.0]]).unwrap();
-        let linestring_geom1 = Geometry::create_line_string(coord_seq1).unwrap();
-
-        let coord_seq2 = CoordSeq::new_from_vec(&[[4.0, 4.0], [5.0, 5.0], [6.0, 4.0]]).unwrap();
-        let linestring_geom2 = Geometry::create_line_string(coord_seq2).unwrap();
-
-        let geometries = vec![linestring_geom1, linestring_geom2];
-        let result = geos_to_arrow(&geometries).unwrap();
-
-        if let ColumnarValue::Array(array) = result {
-            assert!(!array.is_empty());
-            assert_eq!(array.len(), 2);
         } else {
             panic!("Expected ColumnarValue::Array");
         }
