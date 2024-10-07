@@ -40,7 +40,7 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
   """
 
   test("basic udf support") {
-    val table = "test"
+    val table = "test_basic"
     val tableLocation = s"/Users/feng/github/datafusion-comet/spark-warehouse/$table"
     withTable(table) {
       // Drop the table if it exists
@@ -66,12 +66,28 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
 
       // Insert some values into the table
       sql(s"""
-  INSERT INTO test VALUES (
+  INSERT INTO $table VALUES (
     'LA',
     100.0,
     named_struct(
       'type', 'Point',
-      'point', named_struct('x', 1.0, 'y', 1.0, 'z', 0.0, 'm', 0.0),
+      'point', named_struct('x', 34.05, 'y', 118.24, 'z', 0.0, 'm', 0.0),
+      'multipoint', array(),
+      'linestring', array(),
+      'multilinestring', array(),
+      'polygon', array(),
+      'multipolygon', array()
+    )
+  )
+""")
+
+      sql(s"""
+  INSERT INTO $table VALUES (
+    'SF',
+    200.0,
+    named_struct(
+      'type', 'Point',
+      'point', named_struct('x', 37.77, 'y', 122.42, 'z', 0.0, 'm', 0.0),
       'multipoint', array(),
       'linestring', array(),
       'multilinestring', array(),
@@ -82,7 +98,7 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
 """)
 
       val df = sql(
-        s"select geom.point.x, geom.point.y from (select st_point(0.0, 0.0) as geom from $table) as t")
+        s"select place_name, geom.point.x, geom.point.y from (select *, st_point(geometry.point.x, geometry.point.y) as geom from $table) as t")
 
       df.explain(false)
       df.printSchema()
