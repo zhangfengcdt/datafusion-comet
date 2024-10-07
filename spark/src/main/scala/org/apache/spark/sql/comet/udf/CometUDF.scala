@@ -30,8 +30,8 @@ class CometUDF {
   private val COORDINATE: Array[StructField] = Array(
     DataTypes.createStructField("x", DataTypes.DoubleType, false),
     DataTypes.createStructField("y", DataTypes.DoubleType, false),
-    DataTypes.createStructField("z", DataTypes.DoubleType, false),
-    DataTypes.createStructField("m", DataTypes.DoubleType, false))
+    DataTypes.createStructField("z", DataTypes.DoubleType, true),
+    DataTypes.createStructField("m", DataTypes.DoubleType, true))
 
   private val GEOMETRY: Array[StructField] = Array(
     DataTypes.createStructField("type", DataTypes.StringType, false),
@@ -116,8 +116,14 @@ class CometUDF {
     },
     BooleanType)
 
+  // Define the st_point UDF to accept two Double parameters (x and y)
+  // This UDF returns an empty Row as a stub implementation
   val st_point: UserDefinedFunction = udf(
-    new UDF1[Row, Row] { override def call(dummy: Row): Row = Row.empty },
+    new UDF2[Row, Row, Row] {
+      // Implement the logic to create a point geometry from the x and y values
+      // This is a stub implementation
+      override def call(x: Row, y: Row): Row = Row.empty
+    },
     DataTypes.createStructType(GEOMETRY))
 
   val st_multipoint: UserDefinedFunction = udf(

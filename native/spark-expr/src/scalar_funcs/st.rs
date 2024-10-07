@@ -20,7 +20,7 @@ use arrow_array::builder::{ArrayBuilder, BooleanBuilder, Float64Builder, StructB
 use arrow_array::{Array, Float64Array, ListArray, StringArray, StructArray};
 use arrow_schema::{DataType, Field};
 use datafusion::logical_expr::ColumnarValue;
-use datafusion_common::DataFusionError;
+use datafusion_common::{DataFusionError, ScalarValue};
 
 use geos::Geom;
 use crate::scalar_funcs::geometry_helpers::{create_point, create_linestring};
@@ -28,11 +28,47 @@ use crate::scalar_funcs::geometry_helpers::{create_point, create_linestring};
 use crate::scalar_funcs::geos_helpers::{arrow_to_geos};
 
 pub fn spark_st_point(
-    _args: &[ColumnarValue],
+    args: &[ColumnarValue],
     _data_type: &DataType,
 ) -> Result<ColumnarValue, DataFusionError> {
-    // todo: get the x and y coordinates from the arguments
-    create_point(0.0, 0.0)
+    // Ensure there are exactly two arguments
+    if args.len() != 2 {
+        return Err(DataFusionError::Internal(
+            "Expected exactly two arguments".to_string(),
+        ));
+    }
+
+    // Extract the x and y coordinates from the arguments
+    let x_value = &args[0];
+    let y_value = &args[1];
+
+    // Downcast to Float64Array or handle Decimal128 to get the values
+    let x = match x_value {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Float64Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for x, but got {:?}", array.data_type())))?
+            .value(0),
+        ColumnarValue::Scalar(scalar) => match scalar {
+            ScalarValue::Decimal128(Some(value), _, _) => *value as f64,
+            ScalarValue::Float64(Some(value)) => *value,
+            _ => return Err(DataFusionError::Internal(format!("Expected Decimal128 or Float64 scalar input for x, but got {:?}", scalar))),
+        },
+        _ => return Err(DataFusionError::Internal(format!("Expected array or scalar input for x, but got {:?}", x_value))),
+    };
+
+    let y = match y_value {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Float64Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for y, but got {:?}", array.data_type())))?
+            .value(0),
+        ColumnarValue::Scalar(scalar) => match scalar {
+            ScalarValue::Decimal128(Some(value), _, _) => *value as f64,
+            ScalarValue::Float64(Some(value)) => *value,
+            _ => return Err(DataFusionError::Internal(format!("Expected Decimal128 or Float64 scalar input for y, but got {:?}", scalar))),
+        },
+        _ => return Err(DataFusionError::Internal(format!("Expected array or scalar input for y, but got {:?}", y_value))),
+    };
+
+    // Create the point using the extracted x and y coordinates
+    create_point(x, y)
 }
 
 pub fn spark_st_linestring(
@@ -365,8 +401,16 @@ mod tests {
 
     #[test]
     fn test_spark_st_point() {
-        // Call the spark_st_point function
-        let result = spark_st_point(&[], &DataType::Null).unwrap();
+        // Create sample x and y coordinates as Float64Array
+        let x_coords = Float64Array::from(vec![1.0]);
+        let y_coords = Float64Array::from(vec![2.0]);
+
+        // Convert to ColumnarValue
+        let x_value = ColumnarValue::Array(Arc::new(x_coords));
+        let y_value = ColumnarValue::Array(Arc::new(y_coords));
+
+        // Call the spark_st_point function with x and y arguments
+        let result = spark_st_point(&[x_value, y_value], &DataType::Null).unwrap();
 
         // Assert the result is as expected
         if let ColumnarValue::Array(array) = result {

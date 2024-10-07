@@ -81,10 +81,8 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
   )
 """)
 
-      sql(s"select st_point(0) from $table").printSchema()
-
-      val df =
-        sql(s"select pt.x, pt.y, pt.z, pt.m from (SELECT st_point(0).point as pt from $table)")
+      val df = sql(
+        s"select geom.point.x, geom.point.y from (select st_point(0.0, 0.0) as geom from $table) as t")
 
       df.explain(false)
       df.printSchema()
