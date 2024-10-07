@@ -216,3 +216,15 @@ impl Iterator for TestColumnReader {
         Some(self.inner.current_batch())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use criterion::Criterion;
+
+    #[test]
+    fn test_bench() {
+        let mut criterion = profiled();
+        bench(&mut criterion);
+    }
+}
