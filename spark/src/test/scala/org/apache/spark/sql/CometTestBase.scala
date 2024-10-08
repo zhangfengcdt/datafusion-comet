@@ -38,6 +38,7 @@ import org.apache.spark._
 import org.apache.spark.internal.config.{MEMORY_OFFHEAP_ENABLED, MEMORY_OFFHEAP_SIZE, SHUFFLE_MANAGER}
 import org.apache.spark.sql.comet.{CometBatchScanExec, CometBroadcastExchangeExec, CometExec, CometScanExec, CometScanWrapper, CometSinkPlaceHolder, CometSparkToColumnarExec}
 import org.apache.spark.sql.comet.execution.shuffle.{CometColumnarShuffle, CometNativeShuffle, CometShuffleExchangeExec}
+import org.apache.spark.sql.comet.udf.CometUDF
 import org.apache.spark.sql.execution.{ColumnarToRowExec, ExtendedMode, InputAdapter, SparkPlan, WholeStageCodegenExec}
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 import org.apache.spark.sql.internal._
@@ -81,6 +82,7 @@ abstract class CometTestBase
     conf.set(CometConf.COMET_SPARK_TO_ARROW_ENABLED.key, "true")
     conf.set(CometConf.COMET_MEMORY_OVERHEAD.key, "2g")
     conf.set(CometConf.COMET_EXEC_SORT_MERGE_JOIN_WITH_JOIN_FILTER_ENABLED.key, "true")
+    conf.set(CometConf.COMET_CONVERT_FROM_PARQUET_ENABLED.key, "true")
     conf
   }
 
@@ -300,8 +302,13 @@ abstract class CometTestBase
     if (_spark == null) _spark = createSparkSession
   }
 
+  protected def registerUDFs(): Unit = {
+    new CometUDF().registerUDFs(spark)
+  }
+
   protected override def beforeAll(): Unit = {
     initializeSession()
+    registerUDFs()
     super.beforeAll()
   }
 
