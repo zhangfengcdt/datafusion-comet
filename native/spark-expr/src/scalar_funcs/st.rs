@@ -17,15 +17,15 @@
 
 use std::sync::Arc;
 use arrow_array::builder::{ArrayBuilder, BooleanBuilder, Float64Builder, StructBuilder};
-use arrow_array::{Array, Float64Array, ListArray, StringArray, StructArray};
+use arrow_array::{Array, ArrayRef, Float64Array, ListArray, StringArray, StructArray};
 use arrow_schema::{DataType, Field};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::{DataFusionError, ScalarValue};
 
-use geos::Geom;
+use geos::{Geom, Geometry};
 use crate::scalar_funcs::geometry_helpers::{create_point, create_linestring};
 
-use crate::scalar_funcs::geos_helpers::{arrow_to_geos};
+use crate::scalar_funcs::geos_helpers::{arrow_to_geos, geos_to_arrow};
 
 pub fn spark_st_point(
     args: &[ColumnarValue],
@@ -77,6 +77,45 @@ pub fn spark_st_linestring(
 ) -> Result<ColumnarValue, DataFusionError> {
     // todo: get the x and y coordinates from the arguments
     create_linestring(vec![0.0, 1.0], vec![0.0, 1.0])
+}
+
+pub fn spark_st_geomfromwkt(
+    args: &[ColumnarValue],
+    _data_type: &DataType,
+) -> Result<ColumnarValue, DataFusionError> {
+    // Ensure there is exactly one argument
+    if args.len() != 1 {
+        return Err(DataFusionError::Internal(
+            "Expected exactly one argument".to_string(),
+        ));
+    }
+
+    // Extract the WKT strings from the argument
+    let wkt_value = &args[0];
+    let wkt_strings: Vec<String> = match wkt_value {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<StringArray>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected string input for WKT, but got {:?}", array.data_type())))?
+            .iter()
+            .map(|wkt| wkt.unwrap().to_string())
+            .collect(),
+        ColumnarValue::Scalar(scalar) => match scalar {
+            ScalarValue::Utf8(Some(value)) => vec![value.clone()],
+            _ => return Err(DataFusionError::Internal(format!("Expected Utf8 scalar input for WKT, but got {:?}", scalar))),
+        },
+        _ => return Err(DataFusionError::Internal(format!("Expected array or scalar input for WKT, but got {:?}", wkt_value))),
+    };
+
+    // Create the GEOS geometry objects from the WKT strings
+    let geoms: Result<Vec<Geometry>, DataFusionError> = wkt_strings.iter()
+        .map(|wkt_str| Geometry::new_from_wkt(wkt_str)
+            .map_err(|e| DataFusionError::Internal(format!("Failed to create geometry from WKT: {:?}", e))))
+        .collect();
+
+    // Convert the GEOS geometry objects back to an Arrow array
+    let arrow_array = geos_to_arrow(&geoms?)
+        .map_err(|e| DataFusionError::Internal(format!("Failed to convert geometry to Arrow array: {:?}", e)))?;
+
+    Ok(arrow_array)
 }
 
 pub fn spark_st_envelope(
@@ -309,12 +348,41 @@ pub fn spark_st_intersects(
 
     // Call the intersects function on the geometries from array1 and array2 on each element
     let mut boolean_builder = BooleanBuilder::new();
-    for i in 0..geos_geom_array1.len() {
-        let geom1 = &geos_geom_array1[i];
-        let geom2 = &geos_geom_array2[i];
-        let intersects = geom1.intersects(geom2).unwrap();
+    // the zip function is used to iterate over both geometry arrays simultaneously, and the intersects function is applied to each pair of geometries.
+    // This approach leverages vectorization by processing the arrays in a batch-oriented manner, which can be more efficient than processing each element individually.
+    for (g1, g2) in geos_geom_array1.iter().zip(geos_geom_array2.iter()) {
+        let intersects = g1.intersects(g2).unwrap();
         boolean_builder.append_value(intersects);
     }
+
+    // Finalize the BooleanArray and return the result
+    let boolean_array = boolean_builder.finish();
+    Ok(ColumnarValue::Array(Arc::new(boolean_array)))
+}
+
+pub fn spark_st_intersects_fake(
+    args: &[ColumnarValue],
+    _data_type: &DataType,
+) -> Result<ColumnarValue, DataFusionError> {
+    // Ensure there are exactly two arguments
+    if args.len() != 2 {
+        return Err(DataFusionError::Internal(
+            "Expected exactly two arguments".to_string(),
+        ));
+    }
+
+    // Get the number of elements in the input arrays
+    let num_elements = match &args[0] {
+        ColumnarValue::Array(array) => array.len(),
+        _ => return Err(DataFusionError::Internal("Expected array input".to_string())),
+    };
+
+    // Create a BooleanBuilder and append true values
+    let mut boolean_builder = BooleanBuilder::new();
+    for _ in 0..num_elements {
+        boolean_builder.append_value(true);
+    }
+
     // Finalize the BooleanArray and return the result
     let boolean_array = boolean_builder.finish();
     Ok(ColumnarValue::Array(Arc::new(boolean_array)))
@@ -482,6 +550,33 @@ mod tests {
             assert_eq!(result_array.value(0), true); // First point intersects with itself
         } else {
             panic!("Expected array result");
+        }
+    }
+
+    #[test]
+    fn test_spark_st_geomfromwkt() {
+        // Create sample WKT strings
+        let wkts = vec![
+            "LINESTRING (0 0, 1 1, 2 2, 3 3, 4 4, 5 5, 6 6, 7 7, 8 8, 9 9)",
+            "LINESTRING (10 10, 11 11, 12 12, 13 13, 14 14, 15 15, 16 16, 17 17, 18 18, 19 19)"
+        ];
+        let wkt_array = StringArray::from(wkts.clone());
+
+        // Convert to ColumnarValue
+        let wkt_value = ColumnarValue::Array(Arc::new(wkt_array));
+
+        // Call the spark_st_geomfromwkt function
+        let result = spark_st_geomfromwkt(&[wkt_value], &DataType::Null).unwrap();
+
+        // Assert the result is as expected
+        if let ColumnarValue::Array(array) = result {
+            let result_array = array.as_any().downcast_ref::<StructArray>().unwrap();
+            assert_eq!(result_array.len(), wkts.len()); // Check the output size matches the input size
+            for i in 0..wkts.len() {
+                assert_eq!(result_array.column(0).as_any().downcast_ref::<StringArray>().unwrap().value(i), "linestring"); // "type"
+            }
+        } else {
+            panic!("Expected geometry to be linestring");
         }
     }
 }

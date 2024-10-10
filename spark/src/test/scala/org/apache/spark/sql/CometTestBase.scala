@@ -68,19 +68,19 @@ abstract class CometTestBase
   protected def sparkConf: SparkConf = {
     val conf = new SparkConf()
     conf.set("spark.hadoop.fs.file.impl", classOf[DebugFilesystem].getName)
-    conf.set("spark.ui.enabled", "false")
+    conf.set("spark.ui.enabled", "true")
     conf.set(SQLConf.SHUFFLE_PARTITIONS, 10) // reduce parallelism in tests
     conf.set(SQLConf.ANSI_ENABLED.key, "false")
     conf.set(SHUFFLE_MANAGER, shuffleManager)
     conf.set(MEMORY_OFFHEAP_ENABLED.key, "true")
-    conf.set(MEMORY_OFFHEAP_SIZE.key, "2g")
+    conf.set(MEMORY_OFFHEAP_SIZE.key, "8g")
     conf.set(SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key, "1g")
     conf.set(SQLConf.ADAPTIVE_AUTO_BROADCASTJOIN_THRESHOLD.key, "1g")
     conf.set(CometConf.COMET_ENABLED.key, "true")
     conf.set(CometConf.COMET_EXEC_ENABLED.key, "true")
     conf.set(CometConf.COMET_EXEC_SHUFFLE_ENABLED.key, "true")
     conf.set(CometConf.COMET_SPARK_TO_ARROW_ENABLED.key, "true")
-    conf.set(CometConf.COMET_MEMORY_OVERHEAD.key, "2g")
+    conf.set(CometConf.COMET_MEMORY_OVERHEAD.key, "4g")
     conf.set(CometConf.COMET_EXEC_SORT_MERGE_JOIN_WITH_JOIN_FILTER_ENABLED.key, "true")
     conf.set(CometConf.COMET_CONVERT_FROM_PARQUET_ENABLED.key, "true")
     conf
@@ -276,7 +276,7 @@ abstract class CometTestBase
     val conf = sparkConf
 
     if (!conf.contains("spark.master")) {
-      conf.setMaster("local[5]")
+      conf.setMaster("local[*]")
     }
 
     if (!conf.contains("spark.app.name")) {

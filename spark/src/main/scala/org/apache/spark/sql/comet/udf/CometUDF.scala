@@ -116,6 +116,14 @@ class CometUDF {
     },
     BooleanType)
 
+  val st_geomfromwkt: UserDefinedFunction = udf(
+    new UDF1[Row, Row] {
+      // Implement the logic to create a geometry from the well-known text (WKT) representation
+      // This is a stub implementation
+      override def call(wkt: Row): Row = Row.empty
+    },
+    DataTypes.createStructType(GEOMETRY))
+
   // Define the st_point UDF to accept two Double parameters (x and y)
   // This UDF returns an empty Row as a stub implementation
   val st_point: UserDefinedFunction = udf(
@@ -161,5 +169,6 @@ class CometUDF {
     spark.udf.register("st_multipolygon", st_multipolygon)
     spark.udf.register("st_envelope", st_envelope)
     spark.udf.register("st_intersects", st_intersects)
+    spark.udf.register("st_geomfromwkt", st_geomfromwkt)
   }
 }
