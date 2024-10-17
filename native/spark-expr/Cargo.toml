@@ -39,6 +39,8 @@ chrono-tz = { workspace = true }
 num = { workspace = true }
 regex = { workspace = true }
 thiserror = { workspace = true }
+geos = { workspace = true }
+s2 = { workspace = true }
 
 [dev-dependencies]
 arrow-data = {workspace = true}
