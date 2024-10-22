@@ -356,23 +356,13 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
     println(s"Inserted ${startId} to ${endId} rows into $table")
   }
 
-  test("st_intersects of linestring udf support - new") {
+  test("st_intersects of points udf support") {
     val table = "test_intersects"
 
     // Read the table from an existing Parquet file
     val dfOrg = spark.read.parquet(
-    //        "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted_coalesced_100M/part-00000.snappy.parquet"
-    "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted/k=0/n=0/"
-    )
+      "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted_coalesced_100M")
     dfOrg.createOrReplaceTempView(table)
-
-//    dfOrg.cache()
-
-//    dfOrg.show()
-
-//    val count = dfOrg.count()
-//
-//    println(s"count: $count")
 
     val df = sql(s"""
       SELECT id, st_point(ptx, ptx) as geomA, st_point(ptx, ptx) as geomB FROM $table
@@ -409,8 +399,6 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
 
     // Print the elapsed time
     println(s"Query executed in $elapsedTime seconds")
-
-    sleep(1000000)
   }
 
   test("parquet rewrite") {

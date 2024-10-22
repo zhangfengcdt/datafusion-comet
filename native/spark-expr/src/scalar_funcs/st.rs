@@ -360,62 +360,57 @@ pub fn spark_st_intersects(
     let struct_array1 = array1.as_any().downcast_ref::<StructArray>().unwrap();
     let struct_array2 = array2.as_any().downcast_ref::<StructArray>().unwrap();
 
-    // Create a Vec<bool> to store the results
-    let mut boolean_arr = Vec::with_capacity(struct_array1.len());
+    // Extract point arrays
+    let point_array1 = struct_array1
+        .column_by_name(GEOMETRY_TYPE_POINT)
+        .ok_or_else(|| DataFusionError::Internal("Missing 'point' field".to_string()))?
+        .as_any()
+        .downcast_ref::<StructArray>()
+        .unwrap();
 
-    for i in 0..struct_array1.len() {
+    let point_array2 = struct_array2
+        .column_by_name(GEOMETRY_TYPE_POINT)
+        .ok_or_else(|| DataFusionError::Internal("Missing 'point' field".to_string()))?
+        .as_any()
+        .downcast_ref::<StructArray>()
+        .unwrap();
 
-        let point_array1 = struct_array1
-            .column_by_name(GEOMETRY_TYPE_POINT)
-            .ok_or_else(|| DataFusionError::Internal("Missing 'point' field".to_string()))?
-            .as_any()
-            .downcast_ref::<StructArray>()
-            .unwrap();
+    // Extract x and y arrays
+    let x_array1 = point_array1
+        .column_by_name("x")
+        .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .unwrap();
 
-        let point_array2 = struct_array2
-            .column_by_name(GEOMETRY_TYPE_POINT)
-            .ok_or_else(|| DataFusionError::Internal("Missing 'point' field".to_string()))?
-            .as_any()
-            .downcast_ref::<StructArray>()
-            .unwrap();
+    let y_array1 = point_array1
+        .column_by_name("y")
+        .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .unwrap();
 
-        let x_array1 = point_array1
-            .column_by_name("x")
-            .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .unwrap();
+    let x_array2 = point_array2
+        .column_by_name("x")
+        .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .unwrap();
 
-        let y_array1 = point_array1
-            .column_by_name("y")
-            .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .unwrap();
+    let y_array2 = point_array2
+        .column_by_name("y")
+        .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .unwrap();
 
-        let x_array2 = point_array2
-            .column_by_name("x")
-            .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .unwrap();
+    // Compare x and y arrays
+    let x_eq = arrow::compute::kernels::cmp::eq(x_array1, x_array2)?;
+    let y_eq = arrow::compute::kernels::cmp::eq(y_array1, y_array2)?;
 
-        let y_array2 = point_array2
-            .column_by_name("y")
-            .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .unwrap();
+    // Combine the results
+    let boolean_array = arrow::compute::kernels::boolean::and(&x_eq, &y_eq)?;
 
-        let x1 = x_array1.value(0);
-        let y1 = y_array1.value(0);
-        let x2 = x_array2.value(0);
-        let y2 = y_array2.value(0);
-
-        boolean_arr.push(x1 == x2 && y1 == y2);
-    }
-
-    let boolean_array = BooleanArray::from(boolean_arr);
     Ok(ColumnarValue::Array(Arc::new(boolean_array)))
 }
 
