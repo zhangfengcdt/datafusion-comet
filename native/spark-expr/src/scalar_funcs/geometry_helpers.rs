@@ -113,6 +113,12 @@ pub fn get_geometry_fields(coordinate_fields: Vec<Field>) -> Vec<Field> {
     ]
 }
 
+pub fn get_geometry_fields_point(coordinate_fields: Vec<Field>) -> Vec<Field> {
+    vec![
+        Field::new(GEOMETRY_TYPE, DataType::Utf8, false), // "type" field as Utf8 for string
+        Field::new(GEOMETRY_TYPE_POINT, DataType::Struct(coordinate_fields.clone().into()), true)
+    ]
+}
 
 /// Creates a `GenericListBuilder` for building a list of points.
 ///
@@ -256,6 +262,35 @@ pub fn create_geometry_builder() -> StructBuilder {
     geometry_point_builder
 }
 
+
+pub fn create_geometry_builder_point() -> StructBuilder {
+    let x_builder = Float64Builder::new();
+    let y_builder = Float64Builder::new();
+    let z_builder = Float64Builder::new();
+    let m_builder = Float64Builder::new();
+    let coordinate_fields = get_coordinate_fields();
+
+    let type_builder = StringBuilder::new();
+    let point_builder = StructBuilder::new(
+        coordinate_fields.clone(),
+        vec![
+            Box::new(x_builder) as Box<dyn ArrayBuilder>,
+            Box::new(y_builder),
+            Box::new(z_builder),
+            Box::new(m_builder),
+        ],
+    );
+
+    let geometry_point_builder = StructBuilder::new(
+        get_geometry_fields_point(get_coordinate_fields().into()),
+        vec![
+            Box::new(type_builder) as Box<dyn ArrayBuilder>,
+            Box::new(point_builder) as Box<dyn ArrayBuilder>,
+        ],
+    );
+    geometry_point_builder
+}
+
 // Helper function to append null values to specified fields
 fn append_nulls(geometry_builder: &mut StructBuilder, null_indices: &[usize]) {
     for &index in null_indices {
@@ -297,7 +332,7 @@ pub fn append_point(geometry_builder: &mut StructBuilder, x: f64, y: f64) {
     geometry_builder.field_builder::<StructBuilder>(1).unwrap().field_builder::<Float64Builder>(2).unwrap().append_null();
     geometry_builder.field_builder::<StructBuilder>(1).unwrap().field_builder::<Float64Builder>(3).unwrap().append_null();
     geometry_builder.field_builder::<StructBuilder>(1).unwrap().append(true);
-    append_nulls(geometry_builder, &[2, 3, 4, 5, 6]);
+    // append_nulls(geometry_builder, &[2, 3, 4, 5, 6]);
     geometry_builder.append(true);
 }
 

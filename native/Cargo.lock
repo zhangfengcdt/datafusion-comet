@@ -992,6 +992,8 @@ dependencies = [
  "geos",
  "num",
  "rand",
+ "rand_chacha",
+ "rayon",
  "regex",
  "s2",
  "thiserror",

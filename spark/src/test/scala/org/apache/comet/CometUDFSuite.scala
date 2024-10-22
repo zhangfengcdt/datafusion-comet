@@ -359,45 +359,48 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
   test("st_intersects of linestring udf support - new") {
     val table = "test_intersects"
 
-    // Record the start time
-    val startTime = System.nanoTime()
-
     // Read the table from an existing Parquet file
     val dfOrg = spark.read.parquet(
-      "/Users/feng/github/datafusion-comet/spark-warehouse/test_intersects_compacted_replicated")
+    //        "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted_coalesced_100M/part-00000.snappy.parquet"
+    "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted/k=0/n=0/"
+    )
     dfOrg.createOrReplaceTempView(table)
 
-    dfOrg.show()
+//    dfOrg.cache()
 
-    val count = dfOrg.count()
+//    dfOrg.show()
 
-    println(s"count: $count")
+//    val count = dfOrg.count()
+//
+//    println(s"count: $count")
 
-    // Create a temporary view from the table
     val df = sql(s"""
-      SELECT id, st_geomfromwkt(geomA) as geomA, st_geomfromwkt(geomB) as geomB FROM $table
+      SELECT id, st_point(ptx, ptx) as geomA, st_point(ptx, ptx) as geomB FROM $table
     """)
-    df.createOrReplaceTempView("test_intersects_view")
 
-//    // Use the st_intersects UDF to check if the geometries intersect
-//    val resultDf = sql(s"""
-//      SELECT count(geomA), count(geomB) FROM $table
-//    """)
+    df.createOrReplaceTempView("test_intersects_view")
 
     // Use the st_intersects UDF to check if the geometries intersect
     val resultDf = sql(s"""
       SELECT SUM(CASE WHEN st_intersects(geomA, geomB) THEN 1 ELSE 0 END) AS intersects_count FROM test_intersects_view
     """)
 
-//        val resultDf = sql(s"""
-//            SELECT SUM(CASE WHEN SUBSTRING(geomA, 1, 1) > SUBSTRING(geomB, 2, 1) THEN 1 ELSE 0 END) AS intersects_count FROM $table
-//        """)
+//    val resultDf = sql(s"""
+//SELECT COUNT(*) AS intersect_count
+//FROM $table
+//WHERE ptx >= eminx
+//  AND ptx <= emaxx
+//  AND pty >= eminy
+//  AND pty <= emaxy
+//      """)
 
     resultDf.debugCodegen()
     resultDf.explain(false)
     resultDf.printSchema()
-    resultDf.show()
 
+    // Record the start time
+    val startTime = System.nanoTime()
+    resultDf.show()
     // Record the end time
     val endTime = System.nanoTime()
 
@@ -411,7 +414,7 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
   }
 
   test("parquet rewrite") {
-    val table = "test_intersects"
+    val table = "simple_point_polygon"
 
     val tableLocation = s"/Users/feng/github/wherobots-compute/spark/common/target/$table"
     // Drop the table if it exists
@@ -429,27 +432,83 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
     sql(s"""
         CREATE TABLE $table (
           id STRING,
-          geomA STRING,
-          geomB STRING
+          ptx DOUBLE,
+          pty DOUBLE,
+          eminx DOUBLE,
+          eminy DOUBLE,
+          emaxx DOUBLE,
+          emaxy DOUBLE
         )
         USING PARQUET
       """)
 
     for (i <- 0 to 100999 by 1000) {
-      insertRandomRows(table, i, i + 1000 - 1, 10)
+      insertRandomRowsForPointPolygon(table, i, i + 1000 - 1, 10)
     }
 
     // Path to input parquet file
-    val inputParquetPath = "/Users/feng/github/datafusion-comet/spark-warehouse/test_intersects"
+    val inputParquetPath =
+      "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon"
 
     // Path to output parquet file
     val outputParquetPath =
-      "/Users/feng/github/datafusion-comet/spark-warehouse/test_intersects_compacted"
+      "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted"
 
     // Read the parquet file into a DataFrame
     val df = spark.read.parquet(inputParquetPath)
 
     // Write the DataFrame back as Parquet
     df.coalesce(16).write.mode("overwrite").parquet(outputParquetPath)
+  }
+
+  import scala.util.Random
+
+  def insertRandomRowsForPointPolygon(
+      table: String,
+      startId: Int,
+      endId: Int,
+      numPoints: Int): Unit = {
+    val random = new Random()
+    val rows = (startId to endId)
+      .map { id =>
+        val ptx = random.nextDouble() * 100
+        val pty = random.nextDouble() * 100
+        val eminx = random.nextDouble() * 100
+        val eminy = random.nextDouble() * 100
+        val emaxx = eminx + random.nextDouble() * 50 + 1 // Ensure emaxx > eminx
+        val emaxy = eminy + random.nextDouble() * 50 + 1 // Ensure emaxy > eminy
+        s"""
+      (
+        '$id',
+        $ptx,
+        $pty,
+        $eminx,
+        $eminy,
+        $emaxx,
+        $emaxy
+      )
+    """
+      }
+      .mkString(", ")
+
+    val sqlStatement = s"INSERT INTO $table VALUES $rows"
+    sql(sqlStatement)
+    println(s"Inserted ${startId} to ${endId} rows into $table")
+  }
+
+  test("parquet coalesce") {
+    // Path to input parquet file
+    val inputParquetPath =
+      "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted/k=0"
+
+    // Path to output parquet file
+    val outputParquetPath =
+      "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted_coalesced_10M"
+
+    // Read the parquet file into a DataFrame
+    val df = spark.read.parquet(inputParquetPath)
+
+    // Write the DataFrame back as Parquet
+    df.coalesce(1).write.mode("overwrite").parquet(outputParquetPath)
   }
 }

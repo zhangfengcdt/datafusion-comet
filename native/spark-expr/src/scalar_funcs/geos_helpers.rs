@@ -18,6 +18,7 @@
 use std::sync::Arc;
 use arrow_array::Array;
 use arrow_array::{Float64Array, ListArray, StructArray};
+use arrow_array::builder::BooleanBuilder;
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::DataFusionError;
 use geos::{CoordSeq, Geom, Geometry};
@@ -51,7 +52,7 @@ use crate::scalar_funcs::geometry_helpers::{
 /// * The input `ColumnarValue` is not an Arrow `StructArray`.
 /// * The required fields ("type", "x", "y") are missing or have incorrect types.
 /// * The geometry type is unsupported.
-pub fn arrow_to_geos(geom: &ColumnarValue) -> Result<Vec<Geometry>, DataFusionError> {
+pub fn  arrow_to_geos(geom: &ColumnarValue) -> Result<Vec<Geometry>, DataFusionError> {
     // Downcast to StructArray to check the "type" field
     let struct_array = match geom {
         ColumnarValue::Array(array) => array.as_any().downcast_ref::<StructArray>().unwrap(),
@@ -78,25 +79,30 @@ pub fn arrow_to_geos(geom: &ColumnarValue) -> Result<Vec<Geometry>, DataFusionEr
                 .downcast_ref::<StructArray>()
                 .unwrap();
 
-            let x = point_array
+            let x_array = point_array
                 .column_by_name("x")
                 .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
                 .as_any()
                 .downcast_ref::<Float64Array>()
-                .unwrap()
-                .value(0);
+                .unwrap();
 
-            let y = point_array
+            let y_array = point_array
                 .column_by_name("y")
                 .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
                 .as_any()
                 .downcast_ref::<Float64Array>()
-                .unwrap()
-                .value(0);
+                .unwrap();
 
-            let coord_seq = CoordSeq::new_from_vec(&[[x, y]]).map_err(|e| DataFusionError::Internal(e.to_string()))?;
-            let point_geom = Geometry::create_point(coord_seq).map_err(|e| DataFusionError::Internal(e.to_string()))?;
-            Ok(vec![point_geom])
+            let mut geometries = Vec::new();
+            for i in 0..x_array.len() {
+                let x = x_array.value(i);
+                let y = y_array.value(i);
+                let coord_seq = CoordSeq::new_from_vec(&[[x, y]]).map_err(|e| DataFusionError::Internal(e.to_string()))?;
+                let point_geom = Geometry::create_point(coord_seq).map_err(|e| DataFusionError::Internal(e.to_string()))?;
+                geometries.push(point_geom);
+            }
+
+            Ok(geometries)
         }
         GEOMETRY_TYPE_MULTIPOINT => {
             let multipoint_array = struct_array

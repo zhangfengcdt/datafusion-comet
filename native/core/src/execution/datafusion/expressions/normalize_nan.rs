@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use arrow_array::PrimitiveArray;
 use std::{
     any::Any,
     fmt::{Display, Formatter},
@@ -23,8 +24,8 @@ use std::{
 };
 
 use arrow::{
-    array::{as_primitive_array, ArrayAccessor, ArrayIter, Float32Array, Float64Array},
-    datatypes::{ArrowNativeType, Float32Type, Float64Type},
+    array::as_primitive_array,
+    datatypes::{Float32Type, Float64Type},
     record_batch::RecordBatch,
 };
 use arrow_schema::{DataType, Schema};
@@ -63,13 +64,37 @@ impl PhysicalExpr for NormalizeNaNAndZero {
 
         match &self.data_type {
             DataType::Float32 => {
-                let v = eval_typed(as_primitive_array::<Float32Type>(&array));
-                let new_array = Float32Array::from(v);
+                let float_array = as_primitive_array::<Float32Type>(&array);
+                use arrow::compute::unary;
+
+                let normalize_nan_zero = |v: f32| {
+                    if v.is_nan() {
+                        f32::NAN
+                    } else if v == -0.0 {
+                        0.0
+                    } else {
+                        v
+                    }
+                };
+
+                let new_array: PrimitiveArray<Float32Type> = unary(float_array, normalize_nan_zero);
                 Ok(ColumnarValue::Array(Arc::new(new_array)))
             }
             DataType::Float64 => {
-                let v = eval_typed(as_primitive_array::<Float64Type>(&array));
-                let new_array = Float64Array::from(v);
+                let float_array = as_primitive_array::<Float64Type>(&array);
+                use arrow::compute::unary;
+
+                let normalize_nan_zero = |v: f64| {
+                    if v.is_nan() {
+                        f64::NAN
+                    } else if v == -0.0 {
+                        0.0
+                    } else {
+                        v
+                    }
+                };
+
+                let new_array: PrimitiveArray<Float64Type> = unary(float_array, normalize_nan_zero);
                 Ok(ColumnarValue::Array(Arc::new(new_array)))
             }
             dt => panic!("Unexpected data type {:?}", dt),
@@ -98,22 +123,6 @@ impl PhysicalExpr for NormalizeNaNAndZero {
     }
 }
 
-fn eval_typed<V: FloatDouble, T: ArrayAccessor<Item = V>>(input: T) -> Vec<Option<V>> {
-    let iter = ArrayIter::new(input);
-    iter.map(|o| {
-        o.map(|v| {
-            if v.is_nan() {
-                v.nan()
-            } else if v.is_neg_zero() {
-                v.zero()
-            } else {
-                v
-            }
-        })
-    })
-    .collect()
-}
-
 impl Display for NormalizeNaNAndZero {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "FloatNormalize [child: {}]", self.child)
@@ -126,41 +135,5 @@ impl PartialEq<dyn Any> for NormalizeNaNAndZero {
             .downcast_ref::<Self>()
             .map(|x| self.child.eq(&x.child) && self.data_type.eq(&x.data_type))
             .unwrap_or(false)
-    }
-}
-
-trait FloatDouble: ArrowNativeType {
-    fn is_nan(&self) -> bool;
-    fn nan(&self) -> Self;
-    fn is_neg_zero(&self) -> bool;
-    fn zero(&self) -> Self;
-}
-
-impl FloatDouble for f32 {
-    fn is_nan(&self) -> bool {
-        f32::is_nan(*self)
-    }
-    fn nan(&self) -> Self {
-        f32::NAN
-    }
-    fn is_neg_zero(&self) -> bool {
-        *self == -0.0
-    }
-    fn zero(&self) -> Self {
-        0.0
-    }
-}
-impl FloatDouble for f64 {
-    fn is_nan(&self) -> bool {
-        f64::is_nan(*self)
-    }
-    fn nan(&self) -> Self {
-        f64::NAN
-    }
-    fn is_neg_zero(&self) -> bool {
-        *self == -0.0
-    }
-    fn zero(&self) -> Self {
-        0.0
     }
 }

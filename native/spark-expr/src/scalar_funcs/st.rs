@@ -17,13 +17,13 @@
 
 use std::sync::Arc;
 use arrow_array::builder::{ArrayBuilder, BooleanBuilder, Float64Builder, StructBuilder};
-use arrow_array::{Array, ArrayRef, Float64Array, ListArray, StringArray, StructArray};
+use arrow_array::{Array, BooleanArray, Float64Array, ListArray, StringArray, StructArray};
 use arrow_schema::{DataType, Field};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::{DataFusionError, ScalarValue};
 
 use geos::{Geom, Geometry};
-use crate::scalar_funcs::geometry_helpers::{create_point, create_linestring};
+use crate::scalar_funcs::geometry_helpers::{create_point, create_linestring, create_geometry_builder, append_point, create_geometry_builder_point, GEOMETRY_TYPE_POINT};
 
 use crate::scalar_funcs::geos_helpers::{arrow_to_geos, geos_to_arrow};
 
@@ -39,36 +39,39 @@ pub fn spark_st_point(
     }
 
     // Extract the x and y coordinates from the arguments
-    let x_value = &args[0];
-    let y_value = &args[1];
-
-    // Downcast to Float64Array or handle Decimal128 to get the values
-    let x = match x_value {
+    let x_values = match &args[0] {
         ColumnarValue::Array(array) => array.as_any().downcast_ref::<Float64Array>()
-            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for x, but got {:?}", array.data_type())))?
-            .value(0),
-        ColumnarValue::Scalar(scalar) => match scalar {
-            ScalarValue::Decimal128(Some(value), _, _) => *value as f64,
-            ScalarValue::Float64(Some(value)) => *value,
-            _ => return Err(DataFusionError::Internal(format!("Expected Decimal128 or Float64 scalar input for x, but got {:?}", scalar))),
-        },
-        _ => return Err(DataFusionError::Internal(format!("Expected array or scalar input for x, but got {:?}", x_value))),
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for x, but got {:?}", array.data_type())))?,
+        _ => return Err(DataFusionError::Internal("Expected array input for x".to_string())),
     };
 
-    let y = match y_value {
+    let y_values = match &args[1] {
         ColumnarValue::Array(array) => array.as_any().downcast_ref::<Float64Array>()
-            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for y, but got {:?}", array.data_type())))?
-            .value(0),
-        ColumnarValue::Scalar(scalar) => match scalar {
-            ScalarValue::Decimal128(Some(value), _, _) => *value as f64,
-            ScalarValue::Float64(Some(value)) => *value,
-            _ => return Err(DataFusionError::Internal(format!("Expected Decimal128 or Float64 scalar input for y, but got {:?}", scalar))),
-        },
-        _ => return Err(DataFusionError::Internal(format!("Expected array or scalar input for y, but got {:?}", y_value))),
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for y, but got {:?}", array.data_type())))?,
+        _ => return Err(DataFusionError::Internal("Expected array input for y".to_string())),
     };
 
-    // Create the point using the extracted x and y coordinates
-    create_point(x, y)
+    // Ensure the lengths of x and y arrays are the same
+    if x_values.len() != y_values.len() {
+        return Err(DataFusionError::Internal(
+            "Mismatched lengths of x and y arrays".to_string(),
+        ));
+    }
+
+    // Create the geometry builder
+    let mut geometry_builder = create_geometry_builder_point();
+
+    // Append points to the geometry builder
+    for i in 0..x_values.len() {
+        let x = x_values.value(i);
+        let y = y_values.value(i);
+        append_point(&mut geometry_builder, x, y);
+    }
+
+    // Finish the geometry builder and convert to an Arrow array
+    let geometry_array = geometry_builder.finish();
+
+    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
 }
 
 pub fn spark_st_linestring(
@@ -342,6 +345,95 @@ pub fn spark_st_intersects(
     let geom1 = &args[0];
     let geom2 = &args[1];
 
+    // Ensure both arguments are arrays
+    let array1 = match geom1 {
+        ColumnarValue::Array(array) => array,
+        _ => return Err(DataFusionError::Internal("Expected array input for geom1".to_string())),
+    };
+
+    let array2 = match geom2 {
+        ColumnarValue::Array(array) => array,
+        _ => return Err(DataFusionError::Internal("Expected array input for geom2".to_string())),
+    };
+
+    // Downcast to StructArray
+    let struct_array1 = array1.as_any().downcast_ref::<StructArray>().unwrap();
+    let struct_array2 = array2.as_any().downcast_ref::<StructArray>().unwrap();
+
+    // Create a Vec<bool> to store the results
+    let mut boolean_arr = Vec::with_capacity(struct_array1.len());
+
+    for i in 0..struct_array1.len() {
+
+        let point_array1 = struct_array1
+            .column_by_name(GEOMETRY_TYPE_POINT)
+            .ok_or_else(|| DataFusionError::Internal("Missing 'point' field".to_string()))?
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+
+        let point_array2 = struct_array2
+            .column_by_name(GEOMETRY_TYPE_POINT)
+            .ok_or_else(|| DataFusionError::Internal("Missing 'point' field".to_string()))?
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+
+        let x_array1 = point_array1
+            .column_by_name("x")
+            .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+
+        let y_array1 = point_array1
+            .column_by_name("y")
+            .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+
+        let x_array2 = point_array2
+            .column_by_name("x")
+            .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+
+        let y_array2 = point_array2
+            .column_by_name("y")
+            .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+
+        let x1 = x_array1.value(0);
+        let y1 = y_array1.value(0);
+        let x2 = x_array2.value(0);
+        let y2 = y_array2.value(0);
+
+        boolean_arr.push(x1 == x2 && y1 == y2);
+    }
+
+    let boolean_array = BooleanArray::from(boolean_arr);
+    Ok(ColumnarValue::Array(Arc::new(boolean_array)))
+}
+
+pub fn spark_st_intersects_use_geos(
+    args: &[ColumnarValue],
+    _data_type: &DataType,
+) -> Result<ColumnarValue, DataFusionError> {
+    // Ensure there are exactly two arguments
+    if args.len() != 2 {
+        return Err(DataFusionError::Internal(
+            "Expected exactly two arguments".to_string(),
+        ));
+    }
+
+    // Extract the geometries from the arguments
+    let geom1 = &args[0];
+    let geom2 = &args[1];
+
     // Call the geometry_to_geos function
     let geos_geom_array1 = arrow_to_geos(&geom1).unwrap();
     let geos_geom_array2 = arrow_to_geos(&geom2).unwrap();
@@ -360,36 +452,9 @@ pub fn spark_st_intersects(
     Ok(ColumnarValue::Array(Arc::new(boolean_array)))
 }
 
-pub fn spark_st_intersects_fake(
-    args: &[ColumnarValue],
-    _data_type: &DataType,
-) -> Result<ColumnarValue, DataFusionError> {
-    // Ensure there are exactly two arguments
-    if args.len() != 2 {
-        return Err(DataFusionError::Internal(
-            "Expected exactly two arguments".to_string(),
-        ));
-    }
-
-    // Get the number of elements in the input arrays
-    let num_elements = match &args[0] {
-        ColumnarValue::Array(array) => array.len(),
-        _ => return Err(DataFusionError::Internal("Expected array input".to_string())),
-    };
-
-    // Create a BooleanBuilder and append true values
-    let mut boolean_builder = BooleanBuilder::new();
-    for _ in 0..num_elements {
-        boolean_builder.append_value(true);
-    }
-
-    // Finalize the BooleanArray and return the result
-    let boolean_array = boolean_builder.finish();
-    Ok(ColumnarValue::Array(Arc::new(boolean_array)))
-}
-
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use super::*;
     use arrow::array::{Float64Array, StructArray};
     use arrow::datatypes::{DataType, Field};
@@ -470,22 +535,37 @@ mod tests {
     #[test]
     fn test_spark_st_point() {
         // Create sample x and y coordinates as Float64Array
-        let x_coords = Float64Array::from(vec![1.0]);
-        let y_coords = Float64Array::from(vec![2.0]);
+        let x_coords = Float64Array::from(vec![1.0, 1.0]);
+        let y_coords = Float64Array::from(vec![2.0, 2.0]);
 
         // Convert to ColumnarValue
         let x_value = ColumnarValue::Array(Arc::new(x_coords));
         let y_value = ColumnarValue::Array(Arc::new(y_coords));
 
         // Call the spark_st_point function with x and y arguments
-        let result = spark_st_point(&[x_value, y_value], &DataType::Null).unwrap();
+        let point1 = spark_st_point(&[x_value.clone(), y_value.clone()], &DataType::Null).unwrap();
+
+        // Call the spark_st_point function with x and y arguments
+        let point2 = spark_st_point(&[x_value.clone(), y_value.clone()], &DataType::Null).unwrap();
+
+        // assert the point1 and point2 are of length 2
+        if let ColumnarValue::Array(ref array) = point1 {
+            let result_array = array.as_any().downcast_ref::<StructArray>().unwrap();
+            assert_eq!(result_array.len(), 2);
+        } else {
+            panic!("Expected array result");
+        }
+
+        let result = spark_st_intersects(&[point1.clone(), point2.clone()], &DataType::Boolean).unwrap();
 
         // Assert the result is as expected
         if let ColumnarValue::Array(array) = result {
-            let result_array = array.as_any().downcast_ref::<StructArray>().unwrap();
-            assert_eq!(result_array.column(0).as_any().downcast_ref::<StringArray>().unwrap().value(0), "point"); // "type"
+            let result_array = array.as_any().downcast_ref::<BooleanArray>().unwrap();
+            assert_eq!(result_array.len(), 2);
+            assert_eq!(result_array.value(0), true);
+            assert_eq!(result_array.value(1), true);
         } else {
-            panic!("Expected geometry to be point");
+            panic!("Expected array result");
         }
     }
 
@@ -578,5 +658,109 @@ mod tests {
         } else {
             panic!("Expected geometry to be linestring");
         }
+    }
+
+    #[test]
+    fn test_spark_st_geomfromwkt_with_timing() {
+        use std::time::Instant;
+        use rand::Rng;
+        use rand::rngs::OsRng;
+        use rand::SeedableRng;
+        use rand_chacha::ChaCha12Rng;
+        use rayon::prelude::*;
+        use std::sync::{Arc, Mutex};
+
+        // Define the batch record size and the number of batches
+        let batch_record_size = 1024 * 8;
+        let num_batches = 1024;
+
+        // Create a thread-safe random number generator
+        let rng = Arc::new(Mutex::new(ChaCha12Rng::from_rng(OsRng).unwrap()));
+
+        // Generate sample WKT strings with random coordinates for each batch in parallel
+        println!("Generate sample WKT strings...");
+        let wkts_batches: Vec<Vec<String>> = (0..num_batches).into_par_iter().map(|_| {
+            let mut wkts = Vec::new();
+            for _ in 0..batch_record_size {
+                let coords: Vec<String> = (0..10)
+                    .map(|_| {
+                        let mut local_rng = rng.lock().unwrap();
+                        let x: f64 = local_rng.gen_range(0.0..100.0);
+                        let y: f64 = local_rng.gen_range(0.0..100.0);
+                        format!("{} {}", x, y)
+                    })
+                    .collect();
+                wkts.push(format!("LINESTRING ({})", coords.join(", ")));
+            }
+            wkts
+        }).collect();
+
+        println!("Measuring spark_st_geomfromwkt ...");
+        let start = Instant::now();
+
+        // Measure the time to call spark_st_geomfromwkt on each batch in parallel
+        wkts_batches.par_iter().for_each(|wkts| {
+            let wkt_array = StringArray::from(wkts.clone());
+            let wkt_value = ColumnarValue::Array(Arc::new(wkt_array));
+            let result = spark_st_geomfromwkt(&[wkt_value], &DataType::Null).unwrap();
+        });
+
+        let duration = start.elapsed();
+        // Print the duration
+        println!("Time taken to call spark_st_geomfromwkt: {:?}", duration);
+    }
+
+    #[test]
+    fn test_spark_st_point_with_timing() {
+        use std::time::Instant;
+        use rand::Rng;
+        use rand::rngs::OsRng;
+        use rand::SeedableRng;
+        use rand_chacha::ChaCha12Rng;
+        use rayon::prelude::*;
+        use std::sync::{Arc, Mutex};
+
+        // Define the batch record size and the number of batches
+        let batch_record_size = 1024;
+        let num_batches = 100 * 1024;
+
+        // Create a thread-safe random number generator
+        let rng = Arc::new(Mutex::new(ChaCha12Rng::from_rng(OsRng).unwrap()));
+
+        // Generate sample x and y coordinates for each batch in parallel
+        println!("Generate sample coordinates...");
+        let coords_batches: Vec<(Vec<f64>, Vec<f64>)> = (0..num_batches).into_par_iter().map(|_| {
+            let mut x_coords = Vec::new();
+            let mut y_coords = Vec::new();
+            for _ in 0..batch_record_size {
+                let mut rng = rng.lock().unwrap();
+                x_coords.push(rng.gen_range(0.0..100.0));
+                y_coords.push(rng.gen_range(0.0..100.0));
+            }
+            (x_coords, y_coords)
+        }).collect();
+
+        println!("Measuring spark_st_point ...");
+        let start = Instant::now();
+
+        let count = AtomicUsize::new(0);
+        // Measure the time to call spark_st_point on each batch in parallel
+        coords_batches.par_iter().for_each(|(x_coords, y_coords)| {
+            let x_array = Float64Array::from(x_coords.clone());
+            let y_array = Float64Array::from(y_coords.clone());
+            let x_value = ColumnarValue::Array(Arc::new(x_array));
+            let y_value = ColumnarValue::Array(Arc::new(y_array));
+            let result = spark_st_point(&[x_value, y_value], &DataType::Null).unwrap();
+            let result_array = spark_st_intersects(&[result.clone(), result.clone()], &DataType::Boolean).unwrap();
+            // print size of result array
+            if let ColumnarValue::Array(array) = result_array {
+                let result_array = array.as_any().downcast_ref::<BooleanArray>().unwrap();
+                count.fetch_add(result_array.len(), Ordering::SeqCst);
+            }
+        });
+
+        let duration = start.elapsed();
+        // Print the duration
+        println!("Time taken to call spark_st_point: {:?} for total {:?}", duration, count);
     }
 }
