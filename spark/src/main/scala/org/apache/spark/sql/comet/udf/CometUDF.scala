@@ -120,6 +120,16 @@ class CometUDF {
     },
     BooleanType)
 
+  val st_intersects2: UserDefinedFunction = udf(
+    new UDF2[Row, Row, Boolean] {
+      override def call(geomA: Row, geomB: Row): Boolean = {
+        // Implement the logic to check if geomA intersects with geomB
+        // This is a stub implementation
+        false
+      }
+    },
+    BooleanType)
+
   val st_geomfromwkt: UserDefinedFunction = udf(
     new UDF1[Row, Row] {
       // Implement the logic to create a geometry from the well-known text (WKT) representation
@@ -173,6 +183,7 @@ class CometUDF {
     spark.udf.register("st_multipolygon", st_multipolygon)
     spark.udf.register("st_envelope", st_envelope)
     spark.udf.register("st_intersects", st_intersects)
+    spark.udf.register("st_intersects2", st_intersects2)
     spark.udf.register("st_geomfromwkt", st_geomfromwkt)
   }
 }

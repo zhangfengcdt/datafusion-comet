@@ -371,20 +371,11 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
     df.createOrReplaceTempView("test_intersects_view")
 
     // Use the st_intersects UDF to check if the geometries intersect
+    // If you would like to try the GEOS version, change st_intersects to st_intersects2
     val resultDf = sql(s"""
       SELECT SUM(CASE WHEN st_intersects(geomA, geomB) THEN 1 ELSE 0 END) AS intersects_count FROM test_intersects_view
     """)
 
-//    val resultDf = sql(s"""
-//SELECT COUNT(*) AS intersect_count
-//FROM $table
-//WHERE ptx >= eminx
-//  AND ptx <= emaxx
-//  AND pty >= eminy
-//  AND pty <= emaxy
-//      """)
-
-    resultDf.debugCodegen()
     resultDf.explain(false)
     resultDf.printSchema()
 
