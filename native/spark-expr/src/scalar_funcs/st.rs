@@ -21,11 +21,11 @@ use arrow_array::{Array, BooleanArray, Float64Array, ListArray, StringArray, Str
 use arrow_schema::{DataType, Field};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::{DataFusionError, ScalarValue};
-
-use geos::{Geom, Geometry};
+use geo::Intersects;
+use geos::{CoordSeq, Geom, Geometry};
 use crate::scalar_funcs::geometry_helpers::{create_point, create_linestring, create_geometry_builder, append_point, create_geometry_builder_point, GEOMETRY_TYPE_POINT};
 
-use crate::scalar_funcs::geos_helpers::{arrow_to_geos, geos_to_arrow};
+use crate::scalar_funcs::geos_helpers::{arrow_to_geo, arrow_to_geos, geos_to_arrow};
 
 pub fn spark_st_point(
     args: &[ColumnarValue],
@@ -439,6 +439,40 @@ pub fn spark_st_intersects_use_geos(
     // This approach leverages vectorization by processing the arrays in a batch-oriented manner, which can be more efficient than processing each element individually.
     for (g1, g2) in geos_geom_array1.iter().zip(geos_geom_array2.iter()) {
         let intersects = g1.intersects(g2).unwrap();
+        boolean_builder.append_value(intersects);
+    }
+
+    // Finalize the BooleanArray and return the result
+    let boolean_array = boolean_builder.finish();
+    Ok(ColumnarValue::Array(Arc::new(boolean_array)))
+}
+
+pub fn spark_st_intersects_use_geo(
+    args: &[ColumnarValue],
+    _data_type: &DataType,
+) -> Result<ColumnarValue, DataFusionError> {
+    // Ensure there are exactly two arguments
+    if args.len() != 2 {
+        return Err(DataFusionError::Internal(
+            "Expected exactly two arguments".to_string(),
+        ));
+    }
+
+    // Extract the geometries from the arguments
+    let geom1 = &args[0];
+    let geom2 = &args[1];
+
+    // Call the geometry_to_geos function
+    let geos_geom_array1 = arrow_to_geo(&geom1).unwrap();
+    let geos_geom_array2 = arrow_to_geo(&geom2).unwrap();
+
+    // Call the intersects function on the geometries from array1 and array2 on each element
+    let mut boolean_builder = BooleanBuilder::new();
+
+    // the zip function is used to iterate over both geometry arrays simultaneously, and the intersects function is applied to each pair of geometries.
+    // This approach leverages vectorization by processing the arrays in a batch-oriented manner, which can be more efficient than processing each element individually.
+    for (g1, g2) in geos_geom_array1.iter().zip(geos_geom_array2.iter()) {
+        let intersects = g1.intersects(g2);
         boolean_builder.append_value(intersects);
     }
 

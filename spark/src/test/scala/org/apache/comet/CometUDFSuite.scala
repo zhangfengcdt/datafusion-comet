@@ -361,11 +361,13 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
 
     // Read the table from an existing Parquet file
     val dfOrg = spark.read.parquet(
-      "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted_coalesced_100M")
+      "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted_coalesced_1B"
+//      "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted/k=0/n=0"
+    )
     dfOrg.createOrReplaceTempView(table)
 
     val df = sql(s"""
-      SELECT id, st_point(ptx, ptx) as geomA, st_point(ptx, ptx) as geomB FROM $table
+      SELECT id, st_point(ptx, pty) as geomA, st_point(ptx, pty) as geomB FROM $table
     """)
 
     df.createOrReplaceTempView("test_intersects_view")
@@ -373,7 +375,7 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
     // Use the st_intersects UDF to check if the geometries intersect
     // If you would like to try the GEOS version, change st_intersects to st_intersects2
     val resultDf = sql(s"""
-      SELECT SUM(CASE WHEN st_intersects(geomA, geomB) THEN 1 ELSE 0 END) AS intersects_count FROM test_intersects_view
+      SELECT SUM(CASE WHEN st_intersects2(geomA, geomB) THEN 1 ELSE 0 END) AS intersects_count FROM test_intersects_view
     """)
 
     resultDf.explain(false)
