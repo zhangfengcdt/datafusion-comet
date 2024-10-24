@@ -39,6 +39,11 @@ chrono-tz = { workspace = true }
 num = { workspace = true }
 regex = { workspace = true }
 thiserror = { workspace = true }
+geos = { workspace = true }
+geo = { workspace = true }
+s2 = { workspace = true }
+rayon = { workspace = true }
+rand_chacha = "0.3.1"
 
 [dev-dependencies]
 arrow-data = {workspace = true}
