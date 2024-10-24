@@ -120,6 +120,23 @@ pub fn get_geometry_fields_point(coordinate_fields: Vec<Field>) -> Vec<Field> {
     ]
 }
 
+pub fn get_geometry_fields_linestring(coordinate_fields: Vec<Field>) -> Vec<Field> {
+    vec![
+        Field::new(GEOMETRY_TYPE, DataType::Utf8, false), // "type" field as Utf8 for string
+        Field::new(
+            GEOMETRY_TYPE_LINESTRING,
+            DataType::List(Box::new(Field::new(
+                "item",
+                DataType::Struct(coordinate_fields.clone().into()),
+                true,
+            )).into()),
+            // Arrow data format requires that list elements be nullable to handle cases where some elements
+            // in the list might be missing or undefined
+            true
+        )
+    ]
+}
+
 /// Creates a `GenericListBuilder` for building a list of points.
 ///
 /// This function initializes a `GenericListBuilder` with fields for the coordinates (x, y, z, m)
@@ -291,6 +308,22 @@ pub fn create_geometry_builder_point() -> StructBuilder {
     geometry_point_builder
 }
 
+pub fn create_geometry_builder_linestring() -> StructBuilder {
+    let coordinate_fields = get_coordinate_fields();
+
+    let type_builder = StringBuilder::new();
+    let linestring_builder = get_list_of_points_schema(coordinate_fields.clone());
+
+    let geometry_linestring_builder = StructBuilder::new(
+        get_geometry_fields_linestring(get_coordinate_fields().into()),
+        vec![
+            Box::new(type_builder) as Box<dyn ArrayBuilder>,
+            Box::new(linestring_builder) as Box<dyn ArrayBuilder>,
+        ],
+    );
+    geometry_linestring_builder
+}
+
 // Helper function to append null values to specified fields
 fn append_nulls(geometry_builder: &mut StructBuilder, null_indices: &[usize]) {
     for &index in null_indices {
@@ -339,8 +372,8 @@ pub fn append_point(geometry_builder: &mut StructBuilder, x: f64, y: f64) {
 /// Appends a linestring geometry to the `StructBuilder`.
 pub fn append_linestring(geometry_builder: &mut StructBuilder, x_coords: Vec<f64>, y_coords: Vec<f64>) {
     geometry_builder.field_builder::<StringBuilder>(0).unwrap().append_value(GEOMETRY_TYPE_LINESTRING);
-    append_nulls(geometry_builder, &[1, 2, 4, 5, 6]);
-    let list_builder = geometry_builder.field_builder::<ListBuilder<StructBuilder>>(3).unwrap();
+    // append_nulls(geometry_builder, &[1, 2, 4, 5, 6]);
+    let list_builder = geometry_builder.field_builder::<ListBuilder<StructBuilder>>(1).unwrap();
     append_coordinates(list_builder, x_coords, y_coords);
     geometry_builder.append(true);
 }

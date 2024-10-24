@@ -20,7 +20,7 @@ use arrow_array::Array;
 use arrow_array::{Float64Array, ListArray, StructArray};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::DataFusionError;
-use geos::{CoordSeq, Geom, Geometry};
+use geos::{geo_types, CoordSeq, Geom, Geometry};
 use geo::Point;
 use crate::scalar_funcs::geometry_helpers::{
     append_point,
@@ -270,7 +270,7 @@ pub fn  arrow_to_geos(geom: &ColumnarValue) -> Result<Vec<Geometry>, DataFusionE
         _ => Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
     }
 }
-pub fn  arrow_to_geo(geom: &ColumnarValue) -> Result<Vec<Point>, DataFusionError> {
+pub fn  arrow_to_geo(geom: &ColumnarValue) -> Result<Vec<geo_types::Geometry>, DataFusionError> {
     // Downcast to StructArray to check the "type" field
     let struct_array = match geom {
         ColumnarValue::Array(array) => array.as_any().downcast_ref::<StructArray>().unwrap(),
@@ -316,8 +316,49 @@ pub fn  arrow_to_geo(geom: &ColumnarValue) -> Result<Vec<Point>, DataFusionError
                 let x = x_array.value(i);
                 let y = y_array.value(i);
                 let point_geom = Point::new(x, y);
-                geometries.push(point_geom);
+                geometries.push(geo_types::Geometry::Point(point_geom));
             }
+            Ok(geometries)
+        }
+        GEOMETRY_TYPE_LINESTRING => {
+            let linestring_array = struct_array
+                .column_by_name(GEOMETRY_TYPE_LINESTRING)
+                .ok_or_else(|| DataFusionError::Internal("Missing 'linestring' field".to_string()))?
+                .as_any()
+                .downcast_ref::<ListArray>()
+                .unwrap();
+
+            let mut geometries = Vec::new();
+
+            for i in 0..linestring_array.len() {
+                let array_ref = linestring_array.value(i);
+                let point_array = array_ref.as_any().downcast_ref::<StructArray>().unwrap();
+                let x_array = point_array
+                    .column_by_name("x")
+                    .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
+                    .as_any()
+                    .downcast_ref::<Float64Array>()
+                    .unwrap();
+
+                let y_array = point_array
+                    .column_by_name("y")
+                    .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
+                    .as_any()
+                    .downcast_ref::<Float64Array>()
+                    .unwrap();
+
+                let mut coords = Vec::new();
+                for j in 0..x_array.len() {
+                    let x = x_array.value(j);
+                    let y = y_array.value(j);
+                    coords.push((x, y));
+                }
+
+                let coords: Vec<[f64; 2]> = coords.iter().map(|&(x, y)| [x, y]).collect();
+                let linestring_geom = geo_types::LineString::from(coords);
+                geometries.push(geo_types::Geometry::LineString(linestring_geom));
+            }
+
             Ok(geometries)
         }
         _ => Err(DataFusionError::Internal("Unsupported geometry type".to_string())),

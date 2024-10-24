@@ -20,7 +20,7 @@
 package org.apache.spark.sql.comet.udf
 
 import org.apache.spark.sql.{Row, SparkSession}
-import org.apache.spark.sql.api.java.{UDF1, UDF2}
+import org.apache.spark.sql.api.java.{UDF1, UDF2, UDF4}
 import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.sql.functions.udf
 import org.apache.spark.sql.types.{BooleanType, DataTypes, StructField}
@@ -64,6 +64,13 @@ class CometUDF {
   private val GEOMETRY_POINT: Array[StructField] = Array(
     DataTypes.createStructField("type", DataTypes.StringType, false),
     DataTypes.createStructField("point", DataTypes.createStructType(COORDINATE), true))
+
+  private val GEOMETRY_LINESTRING: Array[StructField] = Array(
+    DataTypes.createStructField("type", DataTypes.StringType, false),
+    DataTypes.createStructField(
+      "linestring",
+      DataTypes.createArrayType(DataTypes.createStructType(COORDINATE)),
+      true))
 
   private val GEOMETRY_ENVELOPE: Array[StructField] = Array(
     DataTypes.createStructField("minX", DataTypes.DoubleType, false),
@@ -163,8 +170,12 @@ class CometUDF {
     DataTypes.createStructType(GEOMETRY))
 
   val st_linestring: UserDefinedFunction = udf(
-    new UDF1[Row, Row] { override def call(dummy: Row): Row = Row.empty },
-    DataTypes.createStructType(GEOMETRY))
+    new UDF4[Row, Row, Row, Row, Row] {
+      // Implement the logic to create a linestring geometry from the x and y values
+      // This is a stub implementation
+      override def call(x1: Row, y1: Row, x2: Row, y2: Row): Row = Row.empty
+    },
+    DataTypes.createStructType(GEOMETRY_LINESTRING))
 
   val st_multilinestring: UserDefinedFunction = udf(
     new UDF1[Row, Row] { override def call(dummy: Row): Row = Row.empty },
