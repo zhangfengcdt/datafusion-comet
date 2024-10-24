@@ -23,7 +23,7 @@ use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::{DataFusionError, ScalarValue};
 use geo::Intersects;
 use geos::{CoordSeq, Geom, Geometry};
-use crate::scalar_funcs::geometry_helpers::{create_point, create_linestring, create_geometry_builder, append_point, create_geometry_builder_point, GEOMETRY_TYPE_POINT, append_linestring, create_geometry_builder_linestring};
+use crate::scalar_funcs::geometry_helpers::{create_geometry_builder, append_point, create_geometry_builder_point, GEOMETRY_TYPE_POINT, append_linestring, create_geometry_builder_linestring, create_geometry_builder_polygon, append_polygon};
 
 use crate::scalar_funcs::geos_helpers::{arrow_to_geo, arrow_to_geos, geos_to_arrow};
 
@@ -127,6 +127,67 @@ pub fn spark_st_linestring(
         let x2 = x2_values.value(i);
         let y2 = y2_values.value(i);
         append_linestring(&mut geometry_builder, vec![x1, x2], vec![y1, y2]);
+    }
+
+    // Finish the geometry builder and convert to an Arrow array
+    let geometry_array = geometry_builder.finish();
+
+    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
+}
+
+pub fn spark_st_polygon(
+    args: &[ColumnarValue],
+    _data_type: &DataType,
+) -> Result<ColumnarValue, DataFusionError> {
+    // Ensure there are exactly four arguments
+    if args.len() != 4 {
+        return Err(DataFusionError::Internal(
+            "Expected exactly four arguments".to_string(),
+        ));
+    }
+
+    // Extract the x1, y1, x2, y2 coordinates from the arguments
+    let x1_values = match &args[0] {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Float64Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for x1, but got {:?}", array.data_type())))?,
+        _ => return Err(DataFusionError::Internal("Expected array input for x1".to_string())),
+    };
+
+    let y1_values = match &args[1] {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Float64Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for y1, but got {:?}", array.data_type())))?,
+        _ => return Err(DataFusionError::Internal("Expected array input for y1".to_string())),
+    };
+
+    let x2_values = match &args[2] {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Float64Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for x2, but got {:?}", array.data_type())))?,
+        _ => return Err(DataFusionError::Internal("Expected array input for x2".to_string())),
+    };
+
+    let y2_values = match &args[3] {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Float64Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for y2, but got {:?}", array.data_type())))?,
+        _ => return Err(DataFusionError::Internal("Expected array input for y2".to_string())),
+    };
+
+    // Ensure the lengths of x1, y1, x2, and y2 arrays are the same
+    if x1_values.len() != y1_values.len() || x1_values.len() != x2_values.len() || x1_values.len() != y2_values.len() {
+        return Err(DataFusionError::Internal(
+            "Mismatched lengths of x1, y1, x2, and y2 arrays".to_string(),
+        ));
+    }
+
+    // Create the geometry builder
+    let mut geometry_builder = create_geometry_builder_polygon();
+
+    // Append polygon to the geometry builder
+    for i in 0..x1_values.len() {
+        let x1 = x1_values.value(i);
+        let y1 = y1_values.value(i);
+        let x2 = x2_values.value(i);
+        let y2 = y2_values.value(i);
+        append_polygon(&mut geometry_builder, vec![(vec![x1, x2], vec![y1, y2])]);
     }
 
     // Finish the geometry builder and convert to an Arrow array
@@ -673,6 +734,32 @@ mod tests {
             assert_eq!(result_array.column(0).as_any().downcast_ref::<StringArray>().unwrap().value(0), "linestring"); // "type"
         } else {
             panic!("Expected geometry to be linestring");
+        }
+    }
+
+    #[test]
+    fn test_spark_st_polygon() {
+        // Create sample x1, y1, x2, and y2 coordinates as Float64Array
+        let x1_coords = Float64Array::from(vec![1.0, 2.0, 3.0]);
+        let y1_coords = Float64Array::from(vec![4.0, 5.0, 6.0]);
+        let x2_coords = Float64Array::from(vec![7.0, 8.0, 9.0]);
+        let y2_coords = Float64Array::from(vec![10.0, 11.0, 12.0]);
+
+        // Convert to ColumnarValue
+        let x1_value = ColumnarValue::Array(Arc::new(x1_coords));
+        let y1_value = ColumnarValue::Array(Arc::new(y1_coords));
+        let x2_value = ColumnarValue::Array(Arc::new(x2_coords));
+        let y2_value = ColumnarValue::Array(Arc::new(y2_coords));
+
+        // Call the spark_st_polygon function with x1, y1, x2, and y2 arguments
+        let result = spark_st_polygon(&[x1_value, y1_value, x2_value, y2_value], &DataType::Null).unwrap();
+
+        // Assert the result is as expected
+        if let ColumnarValue::Array(array) = result {
+            let result_array = array.as_any().downcast_ref::<StructArray>().unwrap();
+            assert_eq!(result_array.column(0).as_any().downcast_ref::<StringArray>().unwrap().value(0), "polygon"); // "type"
+        } else {
+            panic!("Expected geometry to be polygon");
         }
     }
 

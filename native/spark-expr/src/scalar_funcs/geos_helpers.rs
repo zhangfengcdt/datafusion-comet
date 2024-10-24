@@ -361,6 +361,58 @@ pub fn  arrow_to_geo(geom: &ColumnarValue) -> Result<Vec<geo_types::Geometry>, D
 
             Ok(geometries)
         }
+        GEOMETRY_TYPE_POLYGON => {
+            let polygon_array = struct_array
+                .column_by_name(GEOMETRY_TYPE_POLYGON)
+                .ok_or_else(|| DataFusionError::Internal("Missing 'polygon' field".to_string()))?
+                .as_any()
+                .downcast_ref::<ListArray>()
+                .unwrap();
+
+            let mut geometries = Vec::new();
+
+            for i in 0..polygon_array.len() {
+                let array_ref = polygon_array.value(i);
+                let linestring_array = array_ref.as_any().downcast_ref::<ListArray>().unwrap();
+
+                let mut coords = Vec::new();
+                for j in 0..linestring_array.len() {
+                    let array_ref = linestring_array.value(j);
+                    let point_array = array_ref.as_any().downcast_ref::<StructArray>().unwrap();
+                    let x_array = point_array
+                        .column_by_name("x")
+                        .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
+                        .as_any()
+                        .downcast_ref::<Float64Array>()
+                        .unwrap();
+
+                    let y_array = point_array
+                        .column_by_name("y")
+                        .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
+                        .as_any()
+                        .downcast_ref::<Float64Array>()
+                        .unwrap();
+
+                    let mut line_coords = Vec::new();
+                    for k in 0..x_array.len() {
+                        let x = x_array.value(k);
+                        let y = y_array.value(k);
+                        line_coords.push((x, y));
+                    }
+
+                    let line_coords: Vec<[f64; 2]> = line_coords.iter().map(|&(x, y)| [x, y]).collect();
+                    coords.push(line_coords);
+                }
+
+                let exterior_ring = coords.remove(0);
+                let interior_rings = coords;
+
+                let polygon_geom = geo_types::Polygon::new(exterior_ring.into(), interior_rings.into_iter().map(Into::into).collect());
+                geometries.push(geo_types::Geometry::Polygon(polygon_geom));
+            }
+
+            Ok(geometries)
+        }
         _ => Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
     }
 }

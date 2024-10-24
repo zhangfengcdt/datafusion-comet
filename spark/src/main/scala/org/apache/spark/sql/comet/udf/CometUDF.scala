@@ -72,6 +72,14 @@ class CometUDF {
       DataTypes.createArrayType(DataTypes.createStructType(COORDINATE)),
       true))
 
+  private val GEOMETRY_POLYGON: Array[StructField] = Array(
+    DataTypes.createStructField("type", DataTypes.StringType, false),
+    DataTypes.createStructField(
+      "polygon",
+      DataTypes.createArrayType(
+        DataTypes.createArrayType(DataTypes.createStructType(COORDINATE))),
+      true))
+
   private val GEOMETRY_ENVELOPE: Array[StructField] = Array(
     DataTypes.createStructField("minX", DataTypes.DoubleType, false),
     DataTypes.createStructField("minY", DataTypes.DoubleType, false),
@@ -182,8 +190,12 @@ class CometUDF {
     DataTypes.createStructType(GEOMETRY))
 
   val st_polygon: UserDefinedFunction = udf(
-    new UDF1[Row, Row] { override def call(dummy: Row): Row = Row.empty },
-    DataTypes.createStructType(GEOMETRY))
+    new UDF4[Row, Row, Row, Row, Row] {
+      // Implement the logic to create a polygon geometry from the x and y values
+      // This is a stub implementation
+      override def call(x1: Row, y1: Row, x2: Row, y2: Row): Row = Row.empty
+    },
+    DataTypes.createStructType(GEOMETRY_POLYGON))
 
   val st_multipolygon: UserDefinedFunction = udf(
     new UDF1[Row, Row] { override def call(dummy: Row): Row = Row.empty },

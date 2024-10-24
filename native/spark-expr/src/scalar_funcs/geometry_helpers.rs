@@ -137,6 +137,25 @@ pub fn get_geometry_fields_linestring(coordinate_fields: Vec<Field>) -> Vec<Fiel
     ]
 }
 
+pub fn get_geometry_fields_polygon(coordinate_fields: Vec<Field>) -> Vec<Field> {
+    vec![
+        Field::new(GEOMETRY_TYPE, DataType::Utf8, false), // "type" field as Utf8 for string
+        Field::new(
+            GEOMETRY_TYPE_POLYGON,
+            DataType::List(Box::new(Field::new(
+                "item",
+                DataType::List(Box::new(Field::new(
+                    "item",
+                    DataType::Struct(coordinate_fields.clone().into()),
+                    true,
+                )).into()),
+                true,
+            )).into()),
+            true
+        )
+    ]
+}
+
 /// Creates a `GenericListBuilder` for building a list of points.
 ///
 /// This function initializes a `GenericListBuilder` with fields for the coordinates (x, y, z, m)
@@ -324,6 +343,22 @@ pub fn create_geometry_builder_linestring() -> StructBuilder {
     geometry_linestring_builder
 }
 
+pub fn create_geometry_builder_polygon() -> StructBuilder {
+    let coordinate_fields = get_coordinate_fields();
+
+    let type_builder = StringBuilder::new();
+    let polygon_builder = get_list_of_list_of_points_schema(coordinate_fields.clone());
+
+    let geometry_linestring_builder = StructBuilder::new(
+        get_geometry_fields_polygon(get_coordinate_fields().into()),
+        vec![
+            Box::new(type_builder) as Box<dyn ArrayBuilder>,
+            Box::new(polygon_builder) as Box<dyn ArrayBuilder>,
+        ],
+    );
+    geometry_linestring_builder
+}
+
 // Helper function to append null values to specified fields
 fn append_nulls(geometry_builder: &mut StructBuilder, null_indices: &[usize]) {
     for &index in null_indices {
@@ -403,8 +438,8 @@ pub fn append_multipoint(geometry_builder: &mut StructBuilder, x_coords: Vec<f64
 /// Appends a polygon geometry to the `StructBuilder`.
 pub fn append_polygon(geometry_builder: &mut StructBuilder, rings: Vec<(Vec<f64>, Vec<f64>)>) {
     geometry_builder.field_builder::<StringBuilder>(0).unwrap().append_value(GEOMETRY_TYPE_POLYGON);
-    append_nulls(geometry_builder, &[1, 2, 3, 4, 6]);
-    let list_builder = geometry_builder.field_builder::<ListBuilder<ListBuilder<StructBuilder>>>(5).unwrap();
+    // append_nulls(geometry_builder, &[1, 2, 3, 4, 6]);
+    let list_builder = geometry_builder.field_builder::<ListBuilder<ListBuilder<StructBuilder>>>(1).unwrap();
     for (x_coords, y_coords) in rings.iter() {
         let ring_builder = list_builder.values();
         append_coordinates(ring_builder, x_coords.clone(), y_coords.clone());

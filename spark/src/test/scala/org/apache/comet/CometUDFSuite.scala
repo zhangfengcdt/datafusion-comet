@@ -361,12 +361,12 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
 
     // Read the table from an existing Parquet file
     val dfOrg = spark.read.parquet(
-      "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted_coalesced_1B")
+      "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted_coalesced_100M")
 //      "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted/k=0/n=0")
     dfOrg.createOrReplaceTempView(table)
 
     val df = sql(s"""
-      SELECT id, st_linestring(ptx, pty, pty, ptx) as geomA, st_linestring(eminx, eminy, emaxx, emaxy) as geomB FROM $table
+      SELECT id, st_linestring(ptx, pty, pty, ptx) as geomA, st_polygon(eminx, eminy, emaxx, emaxy) as geomB FROM $table
     """)
 
     df.printSchema()
