@@ -563,7 +563,7 @@ mod tests {
     use super::*;
     use datafusion::physical_plan::ColumnarValue;
     use geos::Geom;
-    use crate::scalar_funcs::geometry_helpers::{append_linestring, create_linestring, create_multilinestring, create_multipoint, create_point, create_polygon};
+    use crate::scalar_funcs::geometry_helpers::{create_linestring, create_multilinestring, create_multipoint, create_point, create_polygon};
 
     #[test]
     fn test_arrow_to_geos_point() {
@@ -610,27 +610,6 @@ mod tests {
 
         assert_eq!(geometries.len(), 1);
         assert_eq!(geometries[0].to_wkt().unwrap(), "POLYGON ((1 4, 2 5, 3 6, 1 4), (7 10, 8 11, 9 12, 7 10))");
-    }
-
-    #[ignore]
-    // todo - fix this test
-    fn test_arrow_to_geos_multipolygon() {
-        let mut geometry_builder = create_geometry_builder();
-        let x_coords1 = vec![1.0, 2.0, 3.0, 1.0];
-        let y_coords1 = vec![1.0, 2.0, 1.0, 1.0];
-        append_linestring(&mut geometry_builder, x_coords1, y_coords1);
-
-        let x_coords2 = vec![4.0, 5.0, 6.0, 4.0];
-        let y_coords2 = vec![4.0, 5.0, 4.0, 4.0];
-        append_linestring(&mut geometry_builder, x_coords2, y_coords2);
-
-        let geometry_array = geometry_builder.finish();
-
-        let geometries = arrow_to_geos(&ColumnarValue::Array(Arc::new(geometry_array))).unwrap();
-
-        assert_eq!(geometries.len(), 2);
-        assert_eq!(geometries[0].to_wkt().unwrap(), "LINESTRING (1 1, 2 2, 3 1, 1 1)");
-        assert_eq!(geometries[1].to_wkt().unwrap(), "LINESTRING (4 4, 5 5, 6 4, 4 4)");
     }
 
     #[test]

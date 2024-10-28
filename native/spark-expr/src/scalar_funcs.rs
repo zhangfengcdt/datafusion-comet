@@ -55,7 +55,7 @@ mod st;
 mod geometry_helpers;
 mod geos_helpers;
 
-pub use st::{spark_st_envelope, spark_st_point, spark_st_linestring, spark_st_polygon, spark_st_intersects, spark_st_intersects_use_geos, spark_st_intersects_use_geo, spark_st_geomfromwkt};
+pub use st::{spark_st_envelope, spark_st_point, spark_st_points, spark_st_linestring, spark_st_polygon, spark_st_intersects, spark_st_intersects_use_geos, spark_st_intersects_use_geo, spark_st_geomfromwkt};
 
 // exposed for benchmark only
 pub use hash_expressions::{spark_murmur3_hash, spark_xxhash64};

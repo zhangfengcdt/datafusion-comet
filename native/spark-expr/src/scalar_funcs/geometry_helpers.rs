@@ -120,6 +120,23 @@ pub fn get_geometry_fields_point(coordinate_fields: Vec<Field>) -> Vec<Field> {
     ]
 }
 
+pub fn get_geometry_fields_points(coordinate_fields: Vec<Field>) -> Vec<Field> {
+    vec![
+        Field::new(GEOMETRY_TYPE, DataType::Utf8, false), // "type" field as Utf8 for string
+        Field::new(
+            GEOMETRY_TYPE_MULTIPOINT,
+            DataType::List(Box::new(Field::new(
+                "item",
+                DataType::Struct(coordinate_fields.clone().into()),
+                true,
+            )).into()),
+            // Arrow data format requires that list elements be nullable to handle cases where some elements
+            // in the list might be missing or undefined
+            true
+        )
+    ]
+}
+
 pub fn get_geometry_fields_linestring(coordinate_fields: Vec<Field>) -> Vec<Field> {
     vec![
         Field::new(GEOMETRY_TYPE, DataType::Utf8, false), // "type" field as Utf8 for string
@@ -298,7 +315,6 @@ pub fn create_geometry_builder() -> StructBuilder {
     geometry_point_builder
 }
 
-
 pub fn create_geometry_builder_point() -> StructBuilder {
     let x_builder = Float64Builder::new();
     let y_builder = Float64Builder::new();
@@ -325,6 +341,22 @@ pub fn create_geometry_builder_point() -> StructBuilder {
         ],
     );
     geometry_point_builder
+}
+
+pub fn create_geometry_builder_points() -> StructBuilder {
+    let coordinate_fields = get_coordinate_fields();
+
+    let type_builder = StringBuilder::new();
+    let linestring_builder = get_list_of_points_schema(coordinate_fields.clone());
+
+    let geometry_points_builder = StructBuilder::new(
+        get_geometry_fields_points(get_coordinate_fields().into()),
+        vec![
+            Box::new(type_builder) as Box<dyn ArrayBuilder>,
+            Box::new(linestring_builder) as Box<dyn ArrayBuilder>,
+        ],
+    );
+    geometry_points_builder
 }
 
 pub fn create_geometry_builder_linestring() -> StructBuilder {
@@ -404,6 +436,15 @@ pub fn append_point(geometry_builder: &mut StructBuilder, x: f64, y: f64) {
     geometry_builder.append(true);
 }
 
+/// Appends a multipoint geometry to the `StructBuilder`.
+pub fn append_multipoint(geometry_builder: &mut StructBuilder, x_coords: Vec<f64>, y_coords: Vec<f64>) {
+    geometry_builder.field_builder::<StringBuilder>(0).unwrap().append_value(GEOMETRY_TYPE_MULTIPOINT);
+    // append_nulls(geometry_builder, &[1, 3, 4, 5, 6]);
+    let list_builder = geometry_builder.field_builder::<ListBuilder<StructBuilder>>(1).unwrap();
+    append_coordinates(list_builder, x_coords, y_coords);
+    geometry_builder.append(true);
+}
+
 /// Appends a linestring geometry to the `StructBuilder`.
 pub fn append_linestring(geometry_builder: &mut StructBuilder, x_coords: Vec<f64>, y_coords: Vec<f64>) {
     geometry_builder.field_builder::<StringBuilder>(0).unwrap().append_value(GEOMETRY_TYPE_LINESTRING);
@@ -423,15 +464,6 @@ pub fn append_multilinestring(geometry_builder: &mut StructBuilder, linestrings:
         append_coordinates(linestring_builder, x_coords.clone(), y_coords.clone());
     }
     list_builder.append(true);
-    geometry_builder.append(true);
-}
-
-/// Appends a multipoint geometry to the `StructBuilder`.
-pub fn append_multipoint(geometry_builder: &mut StructBuilder, x_coords: Vec<f64>, y_coords: Vec<f64>) {
-    geometry_builder.field_builder::<StringBuilder>(0).unwrap().append_value(GEOMETRY_TYPE_MULTIPOINT);
-    append_nulls(geometry_builder, &[1, 3, 4, 5, 6]);
-    let list_builder = geometry_builder.field_builder::<ListBuilder<StructBuilder>>(2).unwrap();
-    append_coordinates(list_builder, x_coords, y_coords);
     geometry_builder.append(true);
 }
 
@@ -467,7 +499,7 @@ pub fn append_multipolygon(geometry_builder: &mut StructBuilder, polygons: Vec<V
 
 /// Creates a point geometry and returns it as a `ColumnarValue`.
 pub fn create_point(x: f64, y: f64) -> Result<ColumnarValue, DataFusionError> {
-    let mut geometry_builder = create_geometry_builder();
+    let mut geometry_builder = create_geometry_builder_point();
     append_point(&mut geometry_builder, x, y);
     let geometry_array = geometry_builder.finish();
 
@@ -476,7 +508,7 @@ pub fn create_point(x: f64, y: f64) -> Result<ColumnarValue, DataFusionError> {
 
 /// Creates a linestring geometry and returns it as a `ColumnarValue`.
 pub fn create_linestring(x_coords: Vec<f64>, y_coords: Vec<f64>) -> Result<ColumnarValue, DataFusionError> {
-    let mut geometry_builder = create_geometry_builder();
+    let mut geometry_builder = create_geometry_builder_linestring();
     append_linestring(&mut geometry_builder, x_coords, y_coords);
     let geometry_array = geometry_builder.finish();
 
@@ -485,7 +517,7 @@ pub fn create_linestring(x_coords: Vec<f64>, y_coords: Vec<f64>) -> Result<Colum
 
 /// Creates a multipoint geometry and returns it as a `ColumnarValue`.
 pub fn create_multipoint(x_coords: Vec<f64>, y_coords: Vec<f64>) -> Result<ColumnarValue, DataFusionError> {
-    let mut geometry_builder = create_geometry_builder();
+    let mut geometry_builder = create_geometry_builder_points();
     append_multipoint(&mut geometry_builder, x_coords, y_coords);
     let geometry_array = geometry_builder.finish();
 
@@ -494,7 +526,7 @@ pub fn create_multipoint(x_coords: Vec<f64>, y_coords: Vec<f64>) -> Result<Colum
 
 /// Creates a multilinestring geometry and returns it as a `ColumnarValue`.
 pub fn create_multilinestring(linestrings: Vec<(Vec<f64>, Vec<f64>)>) -> Result<ColumnarValue, DataFusionError> {
-    let mut geometry_builder = create_geometry_builder();
+    let mut geometry_builder = create_geometry_builder_linestring();
     append_multilinestring(&mut geometry_builder, linestrings);
     let geometry_array = geometry_builder.finish();
 
@@ -503,7 +535,7 @@ pub fn create_multilinestring(linestrings: Vec<(Vec<f64>, Vec<f64>)>) -> Result<
 
 /// Creates a polygon geometry and returns it as a `ColumnarValue`.
 pub fn create_polygon(rings: Vec<(Vec<f64>, Vec<f64>)>) -> Result<ColumnarValue, DataFusionError> {
-    let mut geometry_builder = create_geometry_builder();
+    let mut geometry_builder = create_geometry_builder_polygon();
     append_polygon(&mut geometry_builder, rings);
     let geometry_array = geometry_builder.finish();
 
@@ -521,9 +553,12 @@ pub fn create_multipolygon(polygons: Vec<Vec<(Vec<f64>, Vec<f64>)>>) -> Result<C
 
 #[cfg(test)]
 mod tests {
+    use arrow::buffer::Buffer;
     use super::*;
-    use arrow_array::{ArrayRef, Float64Array, ListArray, StringArray, StructArray};
+    use arrow_array::{Array, ArrayRef, Float64Array, ListArray, StringArray, StructArray};
+    use arrow_data::ArrayData;
     use datafusion::logical_expr::ColumnarValue;
+    use arrow::error::ArrowError;
 
     fn extract_geometry_type(array: &ArrayRef) -> String {
         let struct_array = array.as_any().downcast_ref::<StructArray>().unwrap();
@@ -545,6 +580,138 @@ mod tests {
         let x_array = struct_array.column(0).as_any().downcast_ref::<Float64Array>().expect("Expected Float64Array at index 0");
         let y_array = struct_array.column(1).as_any().downcast_ref::<Float64Array>().expect("Expected Float64Array at index 1");
         (x_array.values().to_vec(), y_array.values().to_vec())
+    }
+
+    fn flatten_flatten(array: ArrayRef) -> Result<(ColumnarValue, ColumnarValue), ArrowError> {
+        // Downcast to ListArray (outer array)
+        let outer_list_array = array
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .ok_or_else(|| ArrowError::ComputeError("Expected an outer ListArray".to_string()))?;
+
+
+        // Flatten the outer and inner ListArray to get a StructArray
+        let flattened = flatten(flatten(outer_list_array)?
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .ok_or_else(|| ArrowError::ComputeError("Expected a ListArray".to_string())
+            )?)?;
+
+        // The result is a StructArray
+        let inner_list_array = flattened
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .ok_or_else(|| {
+                ArrowError::ComputeError("Expected a ListArray after flattening".to_string())
+            })?;
+
+        // Downcast to StructArray
+        let struct_array = inner_list_array
+            .values()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .ok_or_else(|| ArrowError::ComputeError("Expected a StructArray".to_string()))?;
+
+        // Extract the x and y arrays from the struct
+        let x_field = struct_array
+            .column_by_name("x")
+            .ok_or_else(|| ArrowError::ComputeError("Struct does not have an 'x' field".to_string()))?;
+        let y_field = struct_array
+            .column_by_name("y")
+            .ok_or_else(|| ArrowError::ComputeError("Struct does not have a 'y' field".to_string()))?;
+
+        // Return the x and y fields as ColumnarValue::Array
+        Ok((
+            ColumnarValue::Array(x_field.clone()),
+            ColumnarValue::Array(y_field.clone()),
+        ))
+    }
+
+    /// Flattens a `ListArray` by one level.
+    fn flatten(list_array: &ListArray) -> Result<ArrayRef, ArrowError> {
+        // Ensure the child of the ListArray is also a ListArray
+        let child_array = list_array.values();
+        if let Some(child_list_array) = child_array.as_any().downcast_ref::<ListArray>() {
+            // Proceed with the original logic if the child is a ListArray
+            let outer_offsets = list_array.value_offsets();
+            let inner_offsets = child_list_array.value_offsets();
+            let values = child_list_array.values();
+
+            let mut new_offsets = Vec::with_capacity(list_array.len() + 1);
+            new_offsets.push(0);
+
+            for i in 0..list_array.len() {
+                let outer_start = outer_offsets[i as usize] as usize;
+                let outer_end = outer_offsets[i as usize + 1] as usize;
+
+                let mut total_length = 0;
+                for j in outer_start..outer_end {
+                    let inner_start = inner_offsets[j as usize] as usize;
+                    let inner_end = inner_offsets[j as usize + 1] as usize;
+                    total_length += inner_end - inner_start;
+                }
+
+                let last_offset = *new_offsets.last().unwrap();
+                new_offsets.push(last_offset + total_length as i32);
+            }
+
+            let data_type = DataType::List(Box::new(Field::new(
+                "item",
+                values.data_type().clone(),
+                true,
+            )).into());
+
+            let null_buffer = list_array
+                .nulls()
+                .map(|nulls| nulls.inner().sliced());
+
+            let array_data = ArrayData::builder(data_type)
+                .len(list_array.len())
+                .add_buffer(Buffer::from_slice_ref(&new_offsets))
+                .null_bit_buffer(null_buffer)
+                .child_data(vec![values.to_data().clone()])
+                .build()?;
+
+            let list_array = ListArray::from(array_data);
+            Ok(Arc::new(list_array) as Arc<dyn Array>)
+        } else {
+            // Handle the case where the child is a generic Array
+            let outer_offsets = list_array.value_offsets();
+            let values = child_array;
+
+            let mut new_offsets = Vec::with_capacity(list_array.len() + 1);
+            new_offsets.push(0);
+
+            for i in 0..list_array.len() {
+                let outer_start = outer_offsets[i as usize] as usize;
+                let outer_end = outer_offsets[i as usize + 1] as usize;
+
+                let total_length = outer_end - outer_start;
+
+                let last_offset = *new_offsets.last().unwrap();
+                new_offsets.push(last_offset + total_length as i32);
+            }
+
+            let data_type = DataType::List(Box::new(Field::new(
+                "item",
+                values.data_type().clone(),
+                true,
+            )).into());
+
+            let null_buffer = list_array
+                .nulls()
+                .map(|nulls| nulls.inner().sliced());
+
+            let array_data = ArrayData::builder(data_type)
+                .len(list_array.len())
+                .add_buffer(Buffer::from_slice_ref(&new_offsets))
+                .null_bit_buffer(null_buffer)
+                .child_data(vec![values.to_data().clone()])
+                .build()?;
+            let list_array = ListArray::from(array_data);
+
+            Ok(Arc::new(list_array) as Arc<dyn Array>)
+        }
     }
 
     #[test]
@@ -644,5 +811,47 @@ mod tests {
         };
 
         assert_eq!(extract_geometry_type(&array), GEOMETRY_TYPE_MULTIPOLYGON);
+    }
+
+    #[test]
+    fn test_flatten_flatten() -> Result<(), ArrowError> {
+        let rings = vec![
+            (vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]),
+            (vec![7.0, 8.0, 9.0], vec![10.0, 11.0, 12.0]),
+        ];
+        let result = &create_polygon(rings.clone())?;
+
+        // Downcast to StructArray to check the "type" field
+        let struct_array = match result {
+            ColumnarValue::Array(array) => array.as_any().downcast_ref::<StructArray>().unwrap(),
+            _ => return Err(DataFusionError::Internal("Expected struct input".to_string()).into()),
+        };
+
+        let polygon_array = struct_array
+            .column_by_name(GEOMETRY_TYPE_POLYGON)
+            .ok_or_else(|| DataFusionError::Internal("Missing 'polygon' field".to_string()))?
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+
+        // Flatten the array twice
+        let polygon_array: ArrayRef = Arc::new(polygon_array.clone());
+        let (x_column, y_column) = flatten_flatten(polygon_array)?;
+
+        // Extract the x and y values
+        let x_binding = x_column.into_array(1)?;
+        let y_binding = y_column.into_array(1)?;
+        let x_array = x_binding.as_any().downcast_ref::<Float64Array>().unwrap();
+        let y_array = y_binding.as_any().downcast_ref::<Float64Array>().unwrap();
+
+        // Expected values
+        let expected_x = vec![1.0, 2.0, 3.0, 7.0, 8.0, 9.0];
+        let expected_y = vec![4.0, 5.0, 6.0, 10.0, 11.0, 12.0];
+
+        // Assert the values
+        assert_eq!(x_array.values().to_vec(), expected_x);
+        assert_eq!(y_array.values().to_vec(), expected_y);
+
+        Ok(())
     }
 }

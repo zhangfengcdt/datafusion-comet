@@ -17,13 +17,13 @@
 
 use std::sync::Arc;
 use arrow_array::builder::{ArrayBuilder, BooleanBuilder, Float64Builder, StructBuilder};
-use arrow_array::{Array, BooleanArray, Float64Array, ListArray, StringArray, StructArray};
+use arrow_array::{Array, Float64Array, ListArray, StringArray, StructArray};
 use arrow_schema::{DataType, Field};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::{DataFusionError, ScalarValue};
 use geo::Intersects;
-use geos::{CoordSeq, Geom, Geometry};
-use crate::scalar_funcs::geometry_helpers::{create_geometry_builder, append_point, create_geometry_builder_point, GEOMETRY_TYPE_POINT, append_linestring, create_geometry_builder_linestring, create_geometry_builder_polygon, append_polygon};
+use geos::{Geom, Geometry};
+use crate::scalar_funcs::geometry_helpers::{create_geometry_builder_point, create_geometry_builder_linestring, create_geometry_builder_polygon, append_point, append_linestring, append_polygon, GEOMETRY_TYPE_POINT, create_geometry_builder_points, append_multipoint, GEOMETRY_TYPE_LINESTRING, GEOMETRY_TYPE_POLYGON};
 
 use crate::scalar_funcs::geos_helpers::{arrow_to_geo, arrow_to_geos, geos_to_arrow};
 
@@ -66,6 +66,86 @@ pub fn spark_st_point(
         let x = x_values.value(i);
         let y = y_values.value(i);
         append_point(&mut geometry_builder, x, y);
+    }
+
+    // Finish the geometry builder and convert to an Arrow array
+    let geometry_array = geometry_builder.finish();
+
+    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
+}
+
+pub fn spark_st_points(
+    args: &[ColumnarValue],
+    _data_type: &DataType,
+) -> Result<ColumnarValue, DataFusionError> {
+    // Ensure there is exactly one argument
+    if args.len() != 1 {
+        return Err(DataFusionError::Internal(
+            "Expected exactly one argument".to_string(),
+        ));
+    }
+
+    // Extract the geometry from the argument
+    let value = &args[0];
+
+    // Downcast to StructArray to check the "type" field
+    let struct_array = match value {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<StructArray>()
+            .ok_or_else(|| DataFusionError::Internal("Expected struct array input".to_string()))?,
+        _ => return Err(DataFusionError::Internal("Expected array input".to_string())),
+    };
+
+    // Get the "type" field
+    let type_array = struct_array
+        .column_by_name("type")
+        .ok_or_else(|| DataFusionError::Internal("Missing 'type' field".to_string()))?
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+
+    // Check the geometry type
+    let geometry_type = type_array.value(0);
+
+    // Create the geometry builder
+    let mut geometry_builder = create_geometry_builder_points();
+
+    // Match the geometry type to different schemas and extract points
+    match geometry_type {
+        GEOMETRY_TYPE_POINT => {
+            let point_array = struct_array
+                .column_by_name("point")
+                .ok_or_else(|| DataFusionError::Internal("Missing 'point' field".to_string()))?
+                .as_any()
+                .downcast_ref::<StructArray>()
+                .unwrap();
+
+            let x_array = point_array
+                .column_by_name("x")
+                .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap();
+
+            let y_array = point_array
+                .column_by_name("y")
+                .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap();
+
+            for i in 0..x_array.len() {
+                let x = x_array.value(i);
+                let y = y_array.value(i);
+                append_multipoint(&mut geometry_builder, vec![x], vec![y]);
+            }
+        }
+        GEOMETRY_TYPE_LINESTRING => {
+            // Handle other geometry types similarly
+        }
+        GEOMETRY_TYPE_POLYGON => {
+            // Handle other geometry types similarly
+        }
+        _ => return Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
     }
 
     // Finish the geometry builder and convert to an Arrow array
@@ -218,8 +298,7 @@ pub fn spark_st_geomfromwkt(
         ColumnarValue::Scalar(scalar) => match scalar {
             ScalarValue::Utf8(Some(value)) => vec![value.clone()],
             _ => return Err(DataFusionError::Internal(format!("Expected Utf8 scalar input for WKT, but got {:?}", scalar))),
-        },
-        _ => return Err(DataFusionError::Internal(format!("Expected array or scalar input for WKT, but got {:?}", wkt_value))),
+        }
     };
 
     // Create the GEOS geometry objects from the WKT strings
@@ -712,6 +791,31 @@ mod tests {
     }
 
     #[test]
+    fn test_spark_st_points() {
+        // Create sample x and y coordinates as Float64Array
+        let x_coords = Float64Array::from(vec![1.0, 2.0, 3.0]);
+        let y_coords = Float64Array::from(vec![4.0, 5.0, 6.0]);
+
+        // Convert to ColumnarValue
+        let x_value = ColumnarValue::Array(Arc::new(x_coords));
+        let y_value = ColumnarValue::Array(Arc::new(y_coords));
+
+        // Use spark_st_point to create the input geometry
+        let point_geometry = spark_st_point(&[x_value.clone(), y_value.clone()], &DataType::Null).unwrap();
+
+        // Call the spark_st_points function with the geometry argument
+        let result = spark_st_points(&[point_geometry], &DataType::Null).unwrap();
+
+        // Assert the result is as expected
+        if let ColumnarValue::Array(array) = result {
+            let result_array = array.as_any().downcast_ref::<StructArray>().unwrap();
+            assert_eq!(result_array.len(), 3);
+        } else {
+            panic!("Expected array result");
+        }
+    }
+
+    #[test]
     fn test_spark_st_linestring() {
         // Create sample x1, y1, x2, and y2 coordinates as Float64Array
         let x1_coords = Float64Array::from(vec![1.0, 2.0]);
@@ -882,7 +986,7 @@ mod tests {
         wkts_batches.par_iter().for_each(|wkts| {
             let wkt_array = StringArray::from(wkts.clone());
             let wkt_value = ColumnarValue::Array(Arc::new(wkt_array));
-            let result = spark_st_geomfromwkt(&[wkt_value], &DataType::Null).unwrap();
+            let _result = spark_st_geomfromwkt(&[wkt_value], &DataType::Null).unwrap();
         });
 
         let duration = start.elapsed();
