@@ -320,6 +320,47 @@ pub fn  arrow_to_geo(geom: &ColumnarValue) -> Result<Vec<geo_types::Geometry>, D
             }
             Ok(geometries)
         }
+        GEOMETRY_TYPE_MULTIPOINT => {
+            let multipoints_array = struct_array
+                .column_by_name(GEOMETRY_TYPE_MULTIPOINT)
+                .ok_or_else(|| DataFusionError::Internal("Missing 'linestring' field".to_string()))?
+                .as_any()
+                .downcast_ref::<ListArray>()
+                .unwrap();
+
+            let mut geometries = Vec::new();
+
+            for i in 0..multipoints_array.len() {
+                let array_ref = multipoints_array.value(i);
+                let point_array = array_ref.as_any().downcast_ref::<StructArray>().unwrap();
+
+                let x_array = point_array
+                    .column_by_name("x")
+                    .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
+                    .as_any()
+                    .downcast_ref::<Float64Array>()
+                    .unwrap();
+
+                let y_array = point_array
+                    .column_by_name("y")
+                    .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
+                    .as_any()
+                    .downcast_ref::<Float64Array>()
+                    .unwrap();
+
+                let mut coords = Vec::new();
+                for j in 0..x_array.len() {
+                    let x = x_array.value(j);
+                    let y = y_array.value(j);
+                    coords.push((x, y));
+                }
+                let coords: Vec<[f64; 2]> = coords.iter().map(|&(x, y)| [x, y]).collect();
+                let multipoints_geom = geo_types::MultiPoint::from(coords);
+                geometries.push(geo_types::Geometry::MultiPoint(multipoints_geom));
+            }
+
+            Ok(geometries)
+        }
         GEOMETRY_TYPE_LINESTRING => {
             let linestring_array = struct_array
                 .column_by_name(GEOMETRY_TYPE_LINESTRING)

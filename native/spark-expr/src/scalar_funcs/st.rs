@@ -140,7 +140,40 @@ pub fn spark_st_points(
             }
         }
         GEOMETRY_TYPE_LINESTRING => {
-            // Handle other geometry types similarly
+            let linestring_array = struct_array
+                .column_by_name(GEOMETRY_TYPE_LINESTRING)
+                .ok_or_else(|| DataFusionError::Internal("Missing 'linestring' field".to_string()))?
+                .as_any()
+                .downcast_ref::<ListArray>()
+                .unwrap();
+
+            for i in 0..linestring_array.len() {
+                let array_ref = linestring_array.value(i);
+                let point_array = array_ref.as_any().downcast_ref::<StructArray>().unwrap();
+                let x_array = point_array
+                    .column_by_name("x")
+                    .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
+                    .as_any()
+                    .downcast_ref::<Float64Array>()
+                    .unwrap();
+
+                let y_array = point_array
+                    .column_by_name("y")
+                    .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
+                    .as_any()
+                    .downcast_ref::<Float64Array>()
+                    .unwrap();
+
+                let mut x_coords = Vec::new();
+                let mut y_coords = Vec::new();
+                for j in 0..x_array.len() {
+                    let x = x_array.value(j);
+                    let y = y_array.value(j);
+                    x_coords.push(x);
+                    y_coords.push(y);
+                }
+                append_multipoint(&mut geometry_builder, x_coords, y_coords);
+            }
         }
         GEOMETRY_TYPE_POLYGON => {
             // Handle other geometry types similarly

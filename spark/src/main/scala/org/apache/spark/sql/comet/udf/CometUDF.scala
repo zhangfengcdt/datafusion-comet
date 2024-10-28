@@ -65,6 +65,13 @@ class CometUDF {
     DataTypes.createStructField("type", DataTypes.StringType, false),
     DataTypes.createStructField("point", DataTypes.createStructType(COORDINATE), true))
 
+  private val GEOMETRY_MULTIPOINT: Array[StructField] = Array(
+    DataTypes.createStructField("type", DataTypes.StringType, false),
+    DataTypes.createStructField(
+      "multipoint",
+      DataTypes.createArrayType(DataTypes.createStructType(COORDINATE)),
+      true))
+
   private val GEOMETRY_LINESTRING: Array[StructField] = Array(
     DataTypes.createStructField("type", DataTypes.StringType, false),
     DataTypes.createStructField(
@@ -173,9 +180,9 @@ class CometUDF {
     },
     DataTypes.createStructType(GEOMETRY_POINT))
 
-  val st_multipoint: UserDefinedFunction = udf(
+  val st_points: UserDefinedFunction = udf(
     new UDF1[Row, Row] { override def call(dummy: Row): Row = Row.empty },
-    DataTypes.createStructType(GEOMETRY))
+    DataTypes.createStructType(GEOMETRY_MULTIPOINT))
 
   val st_linestring: UserDefinedFunction = udf(
     new UDF4[Row, Row, Row, Row, Row] {
@@ -209,7 +216,7 @@ class CometUDF {
    */
   def registerUDFs(spark: SparkSession): Unit = {
     spark.udf.register("st_point", st_point)
-    spark.udf.register("st_multipoint", st_multipoint)
+    spark.udf.register("st_points", st_points)
     spark.udf.register("st_linestring", st_linestring)
     spark.udf.register("st_multilinestring", st_multilinestring)
     spark.udf.register("st_polygon", st_polygon)
