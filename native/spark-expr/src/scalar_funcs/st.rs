@@ -21,9 +21,9 @@ use arrow_array::{Array, Float64Array, ListArray, StringArray, StructArray};
 use arrow_schema::{DataType, Field};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::{DataFusionError, ScalarValue};
-use geo::Intersects;
+use geo::{Contains, Intersects, Within};
 use geos::{Geom, Geometry};
-use crate::scalar_funcs::geometry_helpers::{create_geometry_builder_point, create_geometry_builder_linestring, create_geometry_builder_polygon, append_point, append_linestring, append_polygon, GEOMETRY_TYPE_POINT, create_geometry_builder_points, append_multipoint, GEOMETRY_TYPE_LINESTRING, GEOMETRY_TYPE_POLYGON};
+use crate::scalar_funcs::geometry_helpers::{create_geometry_builder_point, create_geometry_builder_linestring, create_geometry_builder_polygon, append_point, append_linestring, append_polygon, GEOMETRY_TYPE_POINT, create_geometry_builder_points, append_multipoint, GEOMETRY_TYPE_LINESTRING, GEOMETRY_TYPE_POLYGON, create_geometry_builder_multilinestring, append_multilinestring};
 
 use crate::scalar_funcs::geos_helpers::{arrow_to_geo, arrow_to_geos, geos_to_arrow};
 
@@ -240,6 +240,67 @@ pub fn spark_st_linestring(
         let x2 = x2_values.value(i);
         let y2 = y2_values.value(i);
         append_linestring(&mut geometry_builder, vec![x1, x2], vec![y1, y2]);
+    }
+
+    // Finish the geometry builder and convert to an Arrow array
+    let geometry_array = geometry_builder.finish();
+
+    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
+}
+
+pub fn spark_st_multilinestring(
+    args: &[ColumnarValue],
+    _data_type: &DataType,
+) -> Result<ColumnarValue, DataFusionError> {
+    // Ensure there are exactly four arguments
+    if args.len() != 4 {
+        return Err(DataFusionError::Internal(
+            "Expected exactly four arguments".to_string(),
+        ));
+    }
+
+    // Extract the x1, y1, x2, y2 coordinates from the arguments
+    let x1_values = match &args[0] {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Float64Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for x1, but got {:?}", array.data_type())))?,
+        _ => return Err(DataFusionError::Internal("Expected array input for x1".to_string())),
+    };
+
+    let y1_values = match &args[1] {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Float64Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for y1, but got {:?}", array.data_type())))?,
+        _ => return Err(DataFusionError::Internal("Expected array input for y1".to_string())),
+    };
+
+    let x2_values = match &args[2] {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Float64Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for x2, but got {:?}", array.data_type())))?,
+        _ => return Err(DataFusionError::Internal("Expected array input for x2".to_string())),
+    };
+
+    let y2_values = match &args[3] {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Float64Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for y2, but got {:?}", array.data_type())))?,
+        _ => return Err(DataFusionError::Internal("Expected array input for y2".to_string())),
+    };
+
+    // Ensure the lengths of x1, y1, x2, and y2 arrays are the same
+    if x1_values.len() != y1_values.len() || x1_values.len() != x2_values.len() || x1_values.len() != y2_values.len() {
+        return Err(DataFusionError::Internal(
+            "Mismatched lengths of x1, y1, x2, and y2 arrays".to_string(),
+        ));
+    }
+
+    // Create the geometry builder
+    let mut geometry_builder = create_geometry_builder_multilinestring();
+
+    // Append linestrings to the geometry builder
+    for i in 0..x1_values.len() {
+        let x1 = x1_values.value(i);
+        let y1 = y1_values.value(i);
+        let x2 = x2_values.value(i);
+        let y2 = y2_values.value(i);
+        append_multilinestring(&mut geometry_builder, vec![(vec![x1, x2], vec![y1, y2])]);
     }
 
     // Finish the geometry builder and convert to an Arrow array
@@ -699,6 +760,74 @@ pub fn spark_st_intersects_use_geo(
     // This approach leverages vectorization by processing the arrays in a batch-oriented manner, which can be more efficient than processing each element individually.
     for (g1, g2) in geos_geom_array1.iter().zip(geos_geom_array2.iter()) {
         let intersects = g1.intersects(g2);
+        boolean_builder.append_value(intersects);
+    }
+
+    // Finalize the BooleanArray and return the result
+    let boolean_array = boolean_builder.finish();
+    Ok(ColumnarValue::Array(Arc::new(boolean_array)))
+}
+
+pub fn spark_st_within(
+    args: &[ColumnarValue],
+    _data_type: &DataType,
+) -> Result<ColumnarValue, DataFusionError> {
+    // Ensure there are exactly two arguments
+    if args.len() != 2 {
+        return Err(DataFusionError::Internal(
+            "Expected exactly two arguments".to_string(),
+        ));
+    }
+
+    // Extract the geometries from the arguments
+    let geom1 = &args[0];
+    let geom2 = &args[1];
+
+    // Call the geometry_to_geos function
+    let geos_geom_array1 = arrow_to_geo(&geom1).unwrap();
+    let geos_geom_array2 = arrow_to_geo(&geom2).unwrap();
+
+    // Call the intersects function on the geometries from array1 and array2 on each element
+    let mut boolean_builder = BooleanBuilder::new();
+
+    // the zip function is used to iterate over both geometry arrays simultaneously, and the intersects function is applied to each pair of geometries.
+    // This approach leverages vectorization by processing the arrays in a batch-oriented manner, which can be more efficient than processing each element individually.
+    for (g1, g2) in geos_geom_array1.iter().zip(geos_geom_array2.iter()) {
+        let intersects = g1.is_within(g2);
+        boolean_builder.append_value(intersects);
+    }
+
+    // Finalize the BooleanArray and return the result
+    let boolean_array = boolean_builder.finish();
+    Ok(ColumnarValue::Array(Arc::new(boolean_array)))
+}
+
+pub fn spark_st_contains(
+    args: &[ColumnarValue],
+    _data_type: &DataType,
+) -> Result<ColumnarValue, DataFusionError> {
+    // Ensure there are exactly two arguments
+    if args.len() != 2 {
+        return Err(DataFusionError::Internal(
+            "Expected exactly two arguments".to_string(),
+        ));
+    }
+
+    // Extract the geometries from the arguments
+    let geom1 = &args[0];
+    let geom2 = &args[1];
+
+    // Call the geometry_to_geos function
+    let geos_geom_array1 = arrow_to_geo(&geom1).unwrap();
+    let geos_geom_array2 = arrow_to_geo(&geom2).unwrap();
+
+    // Call the intersects function on the geometries from array1 and array2 on each element
+    let mut boolean_builder = BooleanBuilder::new();
+
+    // the zip function is used to iterate over both geometry arrays simultaneously, and the intersects function is applied to each pair of geometries.
+    // This approach leverages vectorization by processing the arrays in a batch-oriented manner, which can be more efficient than processing each element individually.
+    for (g1, g2) in geos_geom_array1.iter().zip(geos_geom_array2.iter()) {
+        let intersects = g1.contains(g2);
         boolean_builder.append_value(intersects);
     }
 

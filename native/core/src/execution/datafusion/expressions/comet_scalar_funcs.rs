@@ -23,8 +23,9 @@ use datafusion_comet_spark_expr::scalar_funcs::{
     spark_ceil, spark_date_add, spark_date_sub, spark_decimal_div, spark_floor, spark_hex,
     spark_isnan, spark_make_decimal, spark_murmur3_hash, spark_read_side_padding, spark_round,
     spark_unhex, spark_unscaled_value, spark_xxhash64, SparkChrFunc,
-    spark_st_envelope, spark_st_point, spark_st_points, spark_st_linestring, spark_st_polygon,
-    spark_st_intersects, spark_st_intersects_use_geos, spark_st_intersects_use_geo, spark_st_geomfromwkt
+    spark_st_envelope, spark_st_point, spark_st_points, spark_st_linestring, spark_st_multilinestring, spark_st_polygon,
+    spark_st_intersects, spark_st_intersects_use_geos, spark_st_intersects_use_geo, spark_st_geomfromwkt,
+    spark_st_contains, spark_st_within,
 };
 use datafusion_common::{DataFusionError, Result as DataFusionResult};
 use datafusion_expr::registry::FunctionRegistry;
@@ -72,6 +73,9 @@ pub fn create_comet_physical_fun(
         "st_linestring" => {
             make_comet_scalar_udf!("st_linestring", spark_st_linestring, data_type)
         }
+        "st_multilinestring" => {
+            make_comet_scalar_udf!("st_multilinestring", spark_st_multilinestring, data_type)
+        }
         "st_polygon" => {
             make_comet_scalar_udf!("st_polygon", spark_st_polygon, data_type)
         }
@@ -89,6 +93,12 @@ pub fn create_comet_physical_fun(
         }
         "st_geomfromwkt" => {
             make_comet_scalar_udf!("st_geomfromwkt", spark_st_geomfromwkt, data_type)
+        }
+        "st_within" => {
+            make_comet_scalar_udf!("st_within", spark_st_within, data_type)
+        }
+        "st_contains" => {
+            make_comet_scalar_udf!("st_contains", spark_st_contains, data_type)
         }
         "ceil" => {
             make_comet_scalar_udf!("ceil", spark_ceil, data_type)

@@ -79,6 +79,14 @@ class CometUDF {
       DataTypes.createArrayType(DataTypes.createStructType(COORDINATE)),
       true))
 
+  private val GEOMETRY_MULTILINESTRING: Array[StructField] = Array(
+    DataTypes.createStructField("type", DataTypes.StringType, false),
+    DataTypes.createStructField(
+      "multilinestring",
+      DataTypes.createArrayType(
+        DataTypes.createArrayType(DataTypes.createStructType(COORDINATE))),
+      true))
+
   private val GEOMETRY_POLYGON: Array[StructField] = Array(
     DataTypes.createStructField("type", DataTypes.StringType, false),
     DataTypes.createStructField(
@@ -162,6 +170,26 @@ class CometUDF {
     },
     BooleanType)
 
+  val st_contains: UserDefinedFunction = udf(
+    new UDF2[Row, Row, Boolean] {
+      override def call(geomA: Row, geomB: Row): Boolean = {
+        // Implement the logic to check if geomA intersects with geomB
+        // This is a stub implementation
+        false
+      }
+    },
+    BooleanType)
+
+  val st_within: UserDefinedFunction = udf(
+    new UDF2[Row, Row, Boolean] {
+      override def call(geomA: Row, geomB: Row): Boolean = {
+        // Implement the logic to check if geomA intersects with geomB
+        // This is a stub implementation
+        false
+      }
+    },
+    BooleanType)
+
   val st_geomfromwkt: UserDefinedFunction = udf(
     new UDF1[Row, Row] {
       // Implement the logic to create a geometry from the well-known text (WKT) representation
@@ -194,7 +222,7 @@ class CometUDF {
 
   val st_multilinestring: UserDefinedFunction = udf(
     new UDF1[Row, Row] { override def call(dummy: Row): Row = Row.empty },
-    DataTypes.createStructType(GEOMETRY))
+    DataTypes.createStructType(GEOMETRY_MULTILINESTRING))
 
   val st_polygon: UserDefinedFunction = udf(
     new UDF4[Row, Row, Row, Row, Row] {
@@ -221,10 +249,13 @@ class CometUDF {
     spark.udf.register("st_multilinestring", st_multilinestring)
     spark.udf.register("st_polygon", st_polygon)
     spark.udf.register("st_multipolygon", st_multipolygon)
-    spark.udf.register("st_envelope", st_envelope)
     spark.udf.register("st_intersects", st_intersects)
     spark.udf.register("st_intersects2", st_intersects2)
     spark.udf.register("st_intersects3", st_intersects3)
+    spark.udf.register("st_geomfromwkt", st_geomfromwkt)
+    spark.udf.register("st_within", st_within)
+    spark.udf.register("st_contains", st_contains)
+    spark.udf.register("st_envelope", st_envelope)
     spark.udf.register("st_geomfromwkt", st_geomfromwkt)
   }
 }

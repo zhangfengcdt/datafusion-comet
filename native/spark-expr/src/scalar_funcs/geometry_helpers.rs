@@ -154,6 +154,25 @@ pub fn get_geometry_fields_linestring(coordinate_fields: Vec<Field>) -> Vec<Fiel
     ]
 }
 
+pub fn get_geometry_fields_multilinestring(coordinate_fields: Vec<Field>) -> Vec<Field> {
+    vec![
+        Field::new(GEOMETRY_TYPE, DataType::Utf8, false), // "type" field as Utf8 for string
+        Field::new(
+            GEOMETRY_TYPE_MULTILINESTRING,
+            DataType::List(Box::new(Field::new(
+                "item",
+                DataType::List(Box::new(Field::new(
+                    "item",
+                    DataType::Struct(coordinate_fields.clone().into()),
+                    true,
+                )).into()),
+                true,
+            )).into()),
+            true
+        )
+    ]
+}
+
 pub fn get_geometry_fields_polygon(coordinate_fields: Vec<Field>) -> Vec<Field> {
     vec![
         Field::new(GEOMETRY_TYPE, DataType::Utf8, false), // "type" field as Utf8 for string
@@ -375,6 +394,22 @@ pub fn create_geometry_builder_linestring() -> StructBuilder {
     geometry_linestring_builder
 }
 
+pub fn create_geometry_builder_multilinestring() -> StructBuilder {
+    let coordinate_fields = get_coordinate_fields();
+
+    let type_builder = StringBuilder::new();
+    let multilinestring_builder = get_list_of_list_of_points_schema(coordinate_fields.clone());
+
+    let geometry_linestring_builder = StructBuilder::new(
+        get_geometry_fields_multilinestring(get_coordinate_fields().into()),
+        vec![
+            Box::new(type_builder) as Box<dyn ArrayBuilder>,
+            Box::new(multilinestring_builder) as Box<dyn ArrayBuilder>,
+        ],
+    );
+    geometry_linestring_builder
+}
+
 pub fn create_geometry_builder_polygon() -> StructBuilder {
     let coordinate_fields = get_coordinate_fields();
 
@@ -457,8 +492,8 @@ pub fn append_linestring(geometry_builder: &mut StructBuilder, x_coords: Vec<f64
 /// Appends a multilinestring geometry to the `StructBuilder`.
 pub fn append_multilinestring(geometry_builder: &mut StructBuilder, linestrings: Vec<(Vec<f64>, Vec<f64>)>) {
     geometry_builder.field_builder::<StringBuilder>(0).unwrap().append_value(GEOMETRY_TYPE_MULTILINESTRING);
-    append_nulls(geometry_builder, &[1, 2, 3, 5, 6]);
-    let list_builder = geometry_builder.field_builder::<ListBuilder<ListBuilder<StructBuilder>>>(4).unwrap();
+    // append_nulls(geometry_builder, &[1, 2, 3, 5, 6]);
+    let list_builder = geometry_builder.field_builder::<ListBuilder<ListBuilder<StructBuilder>>>(1).unwrap();
     for (x_coords, y_coords) in linestrings.iter() {
         let linestring_builder = list_builder.values();
         append_coordinates(linestring_builder, x_coords.clone(), y_coords.clone());
