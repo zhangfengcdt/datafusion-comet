@@ -16,12 +16,12 @@
 // under the License.
 
 use std::sync::Arc;
-use arrow_array::builder::{ArrayBuilder, BooleanBuilder, Float64Builder, StructBuilder};
+use arrow_array::builder::{BooleanBuilder};
 use arrow_array::{Array, Float64Array, ListArray, StringArray, StructArray};
-use arrow_schema::{DataType, Field};
+use arrow_schema::{DataType};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::{DataFusionError, ScalarValue};
-use geo::{Contains, Intersects, Within};
+use geo::{BoundingRect, Contains, Intersects, Within};
 use geos::{Geom, Geometry};
 use crate::scalar_funcs::geometry_helpers::{create_geometry_builder_point, create_geometry_builder_linestring, create_geometry_builder_polygon, append_point, append_linestring, append_polygon, GEOMETRY_TYPE_POINT, create_geometry_builder_points, append_multipoint, GEOMETRY_TYPE_LINESTRING, GEOMETRY_TYPE_POLYGON, create_geometry_builder_multilinestring, append_multilinestring};
 
@@ -361,7 +361,7 @@ pub fn spark_st_polygon(
         let y1 = y1_values.value(i);
         let x2 = x2_values.value(i);
         let y2 = y2_values.value(i);
-        append_polygon(&mut geometry_builder, vec![(vec![x1, x2], vec![y1, y2])]);
+        append_polygon(&mut geometry_builder, vec![(vec![x1, x1, x2, x2, x1], vec![y1, y2, y2, y1, y1])]);
     }
 
     // Finish the geometry builder and convert to an Arrow array
@@ -410,211 +410,37 @@ pub fn spark_st_geomfromwkt(
 
 pub fn spark_st_envelope(
     args: &[ColumnarValue],
-    data_type: &DataType,
+    _data_type: &DataType,
 ) -> Result<ColumnarValue, DataFusionError> {
-    // Ensure that the data_type is a struct with fields minX, minY, maxX, maxY, all of type Float64
-    if let DataType::Struct(fields) = data_type {
-        let expected_fields = vec![
-            Field::new("xmin", DataType::Float64, false),
-            Field::new("ymin", DataType::Float64, false),
-            Field::new("xmax", DataType::Float64, false),
-            Field::new("ymax", DataType::Float64, false),
-        ];
-
-        if fields.len() != expected_fields.len()
-            || !fields.iter().zip(&expected_fields).all(|(f1, f2)| **f1 == *f2)
-        {
-            return Err(DataFusionError::Internal(
-                "Expected struct with fields (xmin, ymin, xmax, ymax) of type Float64".to_string(),
-            ));
-        }
-    } else {
+    // Ensure there are exactly two arguments
+    if args.len() != 1 {
         return Err(DataFusionError::Internal(
-            "Expected return type to be a struct".to_string(),
+            "Expected exactly two arguments".to_string(),
         ));
     }
 
-    // first argument is the geometry
-    let value = &args[0];
+    // Extract the geometries from the arguments
+    let geom1 = &args[0];
 
-    // Downcast to StructArray to check the "type" field
-    let struct_array = match value {
-        ColumnarValue::Array(array) => array.as_any().downcast_ref::<StructArray>().unwrap(),
-        _ => return Err(DataFusionError::Internal("Expected struct input".to_string())),
-    };
+    // Call the geometry_to_geos function
+    let geos_geom_array1 = arrow_to_geo(&geom1).unwrap();
 
-    // Get the "type" field
-    let type_array = struct_array
-        .column_by_name("type")
-        .ok_or_else(|| DataFusionError::Internal("Missing 'type' field".to_string()))?
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .unwrap();
+    // Create the geometry builder
+    let mut geometry_builder = create_geometry_builder_polygon();
 
-    // Check the geometry type
-    let geometry_type = type_array.value(0);
-
-    // Match the geometry type to different schemas and call geometry_envelope
-    match geometry_type {
-        "point" => {
-            // Handle point geometry
-            let nested_array = struct_array
-                .column_by_name("point")
-                .ok_or_else(|| DataFusionError::Internal("Missing 'point' field".to_string()))?
-                .as_any()
-                .downcast_ref::<ListArray>()
-                .unwrap();
-            process_geometry_envelope(nested_array)
-        }
-        "linestring" => {
-            // Handle linestring geometry
-            let nested_array = struct_array
-                .column_by_name("linestring")
-                .ok_or_else(|| DataFusionError::Internal("Missing 'linestring' field".to_string()))?
-                .as_any()
-                .downcast_ref::<ListArray>()
-                .unwrap();
-            process_geometry_envelope(nested_array)
-        }
-        "polygon" => {
-            // Handle polygon geometry
-            let nested_array = struct_array
-                .column_by_name("polygon")
-                .ok_or_else(|| DataFusionError::Internal("Missing 'polygon' field".to_string()))?
-                .as_any()
-                .downcast_ref::<ListArray>()
-                .unwrap();
-            process_geometry2_envelope(nested_array)
-        }
-        "multipolygon" => {
-            // Handle polygon geometry
-            let nested_array = struct_array
-                .column_by_name("multipolygon")
-                .ok_or_else(|| DataFusionError::Internal("Missing 'multipolygon' field".to_string()))?
-                .as_any()
-                .downcast_ref::<ListArray>()
-                .unwrap();
-            process_geometry3_envelope(nested_array)
-        }
-        _ => Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
-    }
-}
-
-pub fn build_geometry_envelope(min_x: &mut f64, max_x: &mut f64, min_y: &mut f64, max_y: &mut f64, array_of_arrays_arrays: &ListArray) {
-    for k in 0..array_of_arrays_arrays.len() {
-        let array_array_array_ref = array_of_arrays_arrays.value(k);
-        let struct_array = array_array_array_ref.as_any().downcast_ref::<StructArray>().unwrap();
-
-        let x_array = struct_array.column(0).as_any().downcast_ref::<Float64Array>().unwrap();
-        let y_array = struct_array.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
-
-        // Find the min and max values of x and y
-        for k in 0..x_array.len() {
-            let x = x_array.value(k);
-            let y = y_array.value(k);
-
-            if x < *min_x {
-                *min_x = x;
-            }
-            if x > *max_x {
-                *max_x = x;
-            }
-            if y < *min_y {
-                *min_y = y;
-            }
-            if y > *max_y {
-                *max_y = y;
-            }
-        }
-    }
-}
-
-fn process_geometry_envelope(nested_array: &ListArray) -> Result<ColumnarValue, DataFusionError> {
-    let mut min_x = std::f64::MAX;
-    let mut max_x = std::f64::MIN;
-    let mut min_y = std::f64::MAX;
-    let mut max_y = std::f64::MIN;
-
-    build_geometry_envelope(&mut min_x, &mut max_x, &mut min_y, &mut max_y, nested_array);
-
-    build_envelope(min_x, max_x, min_y, max_y)
-}
-
-fn process_geometry2_envelope(nested_array: &ListArray) -> Result<ColumnarValue, DataFusionError> {
-    let mut min_x = std::f64::MAX;
-    let mut max_x = std::f64::MIN;
-    let mut min_y = std::f64::MAX;
-    let mut max_y = std::f64::MIN;
-
-    for i in 0..nested_array.len() {
-        let array_of_arrays_ref = nested_array.value(i);
-        let array_of_arrays = array_of_arrays_ref.as_any().downcast_ref::<ListArray>().unwrap();
-
-        build_geometry_envelope(&mut min_x, &mut max_x, &mut min_y, &mut max_y, array_of_arrays);
+    for g1 in geos_geom_array1.iter() {
+        let bbox = g1.bounding_rect().unwrap();
+        let x1 = bbox.min().x;
+        let x2 = bbox.max().x;
+        let y1 = bbox.min().y;
+        let y2 = bbox.max().y;
+        append_polygon(&mut geometry_builder, vec![(vec![x1, x1, x2, x2, x1], vec![y1, y2, y2, y1, y1])]);
     }
 
-    build_envelope(min_x, max_x, min_y, max_y)
-}
+    // Finish the geometry builder and convert to an Arrow array
+    let geometry_array = geometry_builder.finish();
 
-fn process_geometry3_envelope(nested_array: &ListArray) -> Result<ColumnarValue, DataFusionError> {
-    let mut min_x = std::f64::MAX;
-    let mut max_x = std::f64::MIN;
-    let mut min_y = std::f64::MAX;
-    let mut max_y = std::f64::MIN;
-
-    for i in 0..nested_array.len() {
-        let array_of_arrays_ref = nested_array.value(i);
-        let array_of_arrays = array_of_arrays_ref.as_any().downcast_ref::<ListArray>().unwrap();
-
-        for j in 0..array_of_arrays.len() {
-            let array_array_ref = array_of_arrays.value(j);
-            let array_of_arrays_arrays = array_array_ref.as_any().downcast_ref::<ListArray>().unwrap();
-
-            build_geometry_envelope(&mut min_x, &mut max_x, &mut min_y, &mut max_y, array_of_arrays_arrays);
-        }
-    }
-
-    build_envelope(min_x, max_x, min_y, max_y)
-}
-
-fn build_envelope(min_x: f64, max_x: f64, min_y: f64, max_y: f64) -> Result<ColumnarValue, DataFusionError> {
-    // Define the fields for the envelope struct (minX, minY, maxX, maxY)
-    let envelope_fields = vec![
-        Field::new("xmin", DataType::Float64, false),
-        Field::new("ymin", DataType::Float64, false),
-        Field::new("xmax", DataType::Float64, false),
-        Field::new("ymax", DataType::Float64, false),
-    ];
-
-    // Create the builders for each field in the struct
-    let mut min_x_builder = Float64Builder::new();
-    let mut min_y_builder = Float64Builder::new();
-    let mut max_x_builder = Float64Builder::new();
-    let mut max_y_builder = Float64Builder::new();
-
-    // Append the calculated values
-    min_x_builder.append_value(min_x);
-    min_y_builder.append_value(min_y);
-    max_x_builder.append_value(max_x);
-    max_y_builder.append_value(max_y);
-
-    // Create a struct builder using the individual field builders (boxed as ArrayBuilder)
-    let mut struct_builder = StructBuilder::new(
-        envelope_fields,
-        vec![
-            Box::new(min_x_builder) as Box<dyn ArrayBuilder>,
-            Box::new(min_y_builder) as Box<dyn ArrayBuilder>,
-            Box::new(max_x_builder) as Box<dyn ArrayBuilder>,
-            Box::new(max_y_builder) as Box<dyn ArrayBuilder>,
-        ],
-    );
-
-    // Finish the struct builder
-    struct_builder.append(true);
-    let struct_array = struct_builder.finish();
-
-    // Return the result as a ColumnarValue with the envelope struct
-    Ok(ColumnarValue::Array(Arc::new(struct_array)))
+    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
 }
 
 pub fn spark_st_intersects(
@@ -793,8 +619,8 @@ pub fn spark_st_within(
     // the zip function is used to iterate over both geometry arrays simultaneously, and the intersects function is applied to each pair of geometries.
     // This approach leverages vectorization by processing the arrays in a batch-oriented manner, which can be more efficient than processing each element individually.
     for (g1, g2) in geos_geom_array1.iter().zip(geos_geom_array2.iter()) {
-        let intersects = g1.is_within(g2);
-        boolean_builder.append_value(intersects);
+        let within = g1.is_within(g2);
+        boolean_builder.append_value(within);
     }
 
     // Finalize the BooleanArray and return the result
@@ -827,8 +653,8 @@ pub fn spark_st_contains(
     // the zip function is used to iterate over both geometry arrays simultaneously, and the intersects function is applied to each pair of geometries.
     // This approach leverages vectorization by processing the arrays in a batch-oriented manner, which can be more efficient than processing each element individually.
     for (g1, g2) in geos_geom_array1.iter().zip(geos_geom_array2.iter()) {
-        let intersects = g1.contains(g2);
-        boolean_builder.append_value(intersects);
+        let contains = g1.contains(g2);
+        boolean_builder.append_value(contains);
     }
 
     // Finalize the BooleanArray and return the result

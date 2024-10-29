@@ -361,12 +361,20 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
 
     // Read the table from an existing Parquet file
     val dfOrg = spark.read.parquet(
-//      "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted_coalesced_100M")
-      "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted/k=0")
+      "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted_coalesced_100M")
+//      "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted/k=0/n=0")
     dfOrg.createOrReplaceTempView(table)
 
+    val point = "st_point(ptx, pty)"
+    val linestring = "st_linestring(ptx-10, pty-10, ptx+10, pty+10)"
+    val polygon = "st_polygon(ptx-10, pty-10, ptx+10, pty+10)"
+    val polygon2 = "st_polygon(eminx, eminy, emaxx, emaxy)"
+
     val df = sql(s"""
-      SELECT id, st_points(st_linestring(ptx, pty, pty, ptx)) as geomA, st_points(st_linestring(eminx, eminy, emaxx, emaxy)) as geomB FROM $table
+      SELECT id,
+      $polygon as geomA,
+      $polygon as geomB
+      FROM $table
     """)
 
     df.printSchema()
@@ -377,8 +385,13 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
 
     // Use the st_intersects UDF to check if the geometries intersect
     // If you would like to try the GEOS version, change st_intersects to st_intersects2
+//    val resultDf = sql(s"""
+//      SELECT SUM(CASE WHEN st_contains
+//      (geomB, geomA) THEN 1 ELSE 0 END) AS count FROM test_intersects_view
+//    """)
+
     val resultDf = sql(s"""
-      SELECT SUM(CASE WHEN st_intersects3(geomA, geomB) THEN 1 ELSE 0 END) AS intersects_count FROM test_intersects_view
+      SELECT COUNT(geo) FROM (SELECT st_envelope(geomA) AS geo FROM test_intersects_view)
     """)
 
     resultDf.explain(false)

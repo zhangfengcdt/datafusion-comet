@@ -125,7 +125,7 @@ class CometUDF {
    */
   val st_envelope: UserDefinedFunction = udf(
     new UDF1[Row, Row] { override def call(geometry: Row): Row = Row.empty },
-    DataTypes.createStructType(GEOMETRY_ENVELOPE))
+    DataTypes.createStructType(GEOMETRY_POLYGON))
 
   /**
    * This method takes two Rows representing geometries and returns a Boolean indicating whether
