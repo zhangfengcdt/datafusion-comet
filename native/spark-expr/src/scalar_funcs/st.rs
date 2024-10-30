@@ -17,15 +17,29 @@
 
 use std::sync::Arc;
 use arrow_array::builder::{BooleanBuilder};
-use arrow_array::{Array, Float64Array, ListArray, StringArray, StructArray};
+use arrow_array::{Array, BinaryArray, Float64Array, ListArray, StringArray, StructArray};
 use arrow_schema::{DataType};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::{DataFusionError, ScalarValue};
 use geo::{BoundingRect, Contains, Intersects, Within};
 use geos::{Geom, Geometry};
-use crate::scalar_funcs::geometry_helpers::{create_geometry_builder_point, create_geometry_builder_linestring, create_geometry_builder_polygon, append_point, append_linestring, append_polygon, GEOMETRY_TYPE_POINT, create_geometry_builder_points, append_multipoint, GEOMETRY_TYPE_LINESTRING, GEOMETRY_TYPE_POLYGON, create_geometry_builder_multilinestring, append_multilinestring};
-
-use crate::scalar_funcs::geos_helpers::{arrow_to_geo, arrow_to_geos, geos_to_arrow};
+use crate::scalar_funcs::geometry_helpers::{
+    create_geometry_builder_point,
+    create_geometry_builder_linestring,
+    create_geometry_builder_polygon,
+    create_geometry_builder_points,
+    create_geometry_builder_multilinestring,
+    append_point,
+    append_linestring,
+    append_polygon,
+    append_multipoint,
+    append_multilinestring,
+    GEOMETRY_TYPE_POINT,
+    GEOMETRY_TYPE_LINESTRING,
+    GEOMETRY_TYPE_POLYGON,
+};
+use crate::scalar_funcs::geos_helpers::{arrow_to_geo, arrow_to_geos, geo_to_arrow, geos_to_arrow};
+use crate::scalar_funcs::wkb::read_wkb;
 
 pub fn spark_st_point(
     args: &[ColumnarValue],
@@ -408,6 +422,46 @@ pub fn spark_st_geomfromwkt(
     Ok(arrow_array)
 }
 
+pub fn spark_st_geomfromwkb(
+    args: &[ColumnarValue],
+    _data_type: &DataType,
+) -> Result<ColumnarValue, DataFusionError> {
+    // Ensure there is exactly one argument
+    if args.len() != 1 {
+        return Err(DataFusionError::Internal(
+            "Expected exactly one argument".to_string(),
+        ));
+    }
+
+    // Extract the WKB binaries from the argument
+    let wkb_value = &args[0];
+    let wkb_binaries: Vec<Vec<u8>> = match wkb_value {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<BinaryArray>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected binary input for WKB, but got {:?}", array.data_type())))?
+            .iter()
+            .map(|wkb| wkb.unwrap().to_vec())
+            .collect(),
+        ColumnarValue::Scalar(scalar) => match scalar {
+            ScalarValue::Binary(Some(value)) => vec![value.clone()],
+            _ => return Err(DataFusionError::Internal(format!("Expected binary scalar input for WKB, but got {:?}", scalar))),
+        }
+    };
+
+    // Create GEO geometry objects from the WKB binaries
+    let geoms: Result<Vec<geo::Geometry>, DataFusionError> = wkb_binaries.iter()
+        .map(|wkb_bin| {
+            read_wkb(wkb_bin)
+                .map_err(|e| DataFusionError::Internal(format!("Failed to create geometry from WKB: {:?}", e)))
+        })
+        .collect();
+
+    // Convert the GEO geometry objects back to an Arrow array
+    let arrow_array = geo_to_arrow(&geoms?)
+        .map_err(|e| DataFusionError::Internal(format!("Failed to convert geometry to Arrow array: {:?}", e)))?;
+
+    Ok(arrow_array)
+}
+
 pub fn spark_st_envelope(
     args: &[ColumnarValue],
     _data_type: &DataType,
@@ -664,7 +718,6 @@ pub fn spark_st_contains(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use super::*;
     use arrow::array::{Float64Array, StructArray};
     use arrow::datatypes::{DataType, Field};
@@ -932,107 +985,45 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_spark_st_geomfromwkt_with_timing() {
-        use std::time::Instant;
-        use rand::Rng;
-        use rand::rngs::OsRng;
-        use rand::SeedableRng;
-        use rand_chacha::ChaCha12Rng;
-        use rayon::prelude::*;
-        use std::sync::{Arc, Mutex};
-
-        // Define the batch record size and the number of batches
-        let batch_record_size = 1024 * 8;
-        let num_batches = 1024;
-
-        // Create a thread-safe random number generator
-        let rng = Arc::new(Mutex::new(ChaCha12Rng::from_rng(OsRng).unwrap()));
-
-        // Generate sample WKT strings with random coordinates for each batch in parallel
-        println!("Generate sample WKT strings...");
-        let wkts_batches: Vec<Vec<String>> = (0..num_batches).into_par_iter().map(|_| {
-            let mut wkts = Vec::new();
-            for _ in 0..batch_record_size {
-                let coords: Vec<String> = (0..10)
-                    .map(|_| {
-                        let mut local_rng = rng.lock().unwrap();
-                        let x: f64 = local_rng.gen_range(0.0..100.0);
-                        let y: f64 = local_rng.gen_range(0.0..100.0);
-                        format!("{} {}", x, y)
-                    })
-                    .collect();
-                wkts.push(format!("LINESTRING ({})", coords.join(", ")));
-            }
-            wkts
-        }).collect();
-
-        println!("Measuring spark_st_geomfromwkt ...");
-        let start = Instant::now();
-
-        // Measure the time to call spark_st_geomfromwkt on each batch in parallel
-        wkts_batches.par_iter().for_each(|wkts| {
-            let wkt_array = StringArray::from(wkts.clone());
-            let wkt_value = ColumnarValue::Array(Arc::new(wkt_array));
-            let _result = spark_st_geomfromwkt(&[wkt_value], &DataType::Null).unwrap();
-        });
-
-        let duration = start.elapsed();
-        // Print the duration
-        println!("Time taken to call spark_st_geomfromwkt: {:?}", duration);
-    }
+    use arrow_array::builder::BinaryBuilder;
 
     #[test]
-    fn test_spark_st_point_with_timing() {
-        use std::time::Instant;
-        use rand::Rng;
-        use rand::rngs::OsRng;
-        use rand::SeedableRng;
-        use rand_chacha::ChaCha12Rng;
-        use rayon::prelude::*;
-        use std::sync::{Arc, Mutex};
+    fn test_spark_st_geomfromwkb() {
+        // Create sample WKB binaries
+        let wkb1: Vec<u8> = vec![
+            0x01, // little endian
+            0x01, 0x00, 0x00, 0x80, // type 1 = point with Z flag
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0x3F, // x = 1.0
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, // y = 2.0
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x40, // z = 3.0 (ignored)
+        ];
 
-        // Define the batch record size and the number of batches
-        let batch_record_size = 1024;
-        let num_batches = 100 * 1024;
+        let wkb2: Vec<u8> = vec![
+            0x01, // little endian
+            0x01, 0x00, 0x00, 0x80, // type 1 = point with Z flag
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0x3F, // x = 1.0
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, // y = 2.0
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x40, // z = 3.0 (ignored)
+        ];
 
-        // Create a thread-safe random number generator
-        let rng = Arc::new(Mutex::new(ChaCha12Rng::from_rng(OsRng).unwrap()));
+        // Use BinaryBuilder to create the BinaryArray
+        let mut builder = BinaryBuilder::new();
+        builder.append_value(&wkb1);
+        builder.append_value(&wkb2);
+        let wkb_array = builder.finish();
 
-        // Generate sample x and y coordinates for each batch in parallel
-        println!("Generate sample coordinates...");
-        let coords_batches: Vec<(Vec<f64>, Vec<f64>)> = (0..num_batches).into_par_iter().map(|_| {
-            let mut x_coords = Vec::new();
-            let mut y_coords = Vec::new();
-            for _ in 0..batch_record_size {
-                let mut rng = rng.lock().unwrap();
-                x_coords.push(rng.gen_range(0.0..100.0));
-                y_coords.push(rng.gen_range(0.0..100.0));
-            }
-            (x_coords, y_coords)
-        }).collect();
+        // Convert to ColumnarValue
+        let wkb_value = ColumnarValue::Array(Arc::new(wkb_array));
 
-        println!("Measuring spark_st_point ...");
-        let start = Instant::now();
+        // Call the spark_st_geomfromwkb function with the WKB argument
+        let result = spark_st_geomfromwkb(&[wkb_value], &DataType::Null).unwrap();
 
-        let count = AtomicUsize::new(0);
-        // Measure the time to call spark_st_point on each batch in parallel
-        coords_batches.par_iter().for_each(|(x_coords, y_coords)| {
-            let x_array = Float64Array::from(x_coords.clone());
-            let y_array = Float64Array::from(y_coords.clone());
-            let x_value = ColumnarValue::Array(Arc::new(x_array));
-            let y_value = ColumnarValue::Array(Arc::new(y_array));
-            let result = spark_st_point(&[x_value, y_value], &DataType::Null).unwrap();
-            let result_array = spark_st_intersects(&[result.clone(), result.clone()], &DataType::Boolean).unwrap();
-            // print size of result array
-            if let ColumnarValue::Array(array) = result_array {
-                let result_array = array.as_any().downcast_ref::<BooleanArray>().unwrap();
-                count.fetch_add(result_array.len(), Ordering::SeqCst);
-            }
-        });
-
-        let duration = start.elapsed();
-        // Print the duration
-        println!("Time taken to call spark_st_point: {:?} for total {:?}", duration, count);
+        // Assert the result is as expected
+        if let ColumnarValue::Array(array) = result {
+            let result_array = array.as_any().downcast_ref::<StructArray>().unwrap();
+            assert_eq!(result_array.len(), 2); // Two geometries
+        } else {
+            panic!("Expected array result");
+        }
     }
 }

@@ -22,17 +22,7 @@ use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::DataFusionError;
 use geos::{geo_types, CoordSeq, Geom, Geometry};
 use geo::Point;
-use crate::scalar_funcs::geometry_helpers::{
-    append_point,
-    append_linestring,
-    create_geometry_builder,
-    GEOMETRY_TYPE_POINT,
-    GEOMETRY_TYPE_MULTIPOINT,
-    GEOMETRY_TYPE_LINESTRING,
-    GEOMETRY_TYPE_MULTILINESTRING,
-    GEOMETRY_TYPE_POLYGON,
-    GEOMETRY_TYPE_MULTIPOLYGON,
-};
+use crate::scalar_funcs::geometry_helpers::{GEOMETRY_TYPE_POINT, GEOMETRY_TYPE_MULTIPOINT, GEOMETRY_TYPE_LINESTRING, GEOMETRY_TYPE_MULTILINESTRING, GEOMETRY_TYPE_POLYGON, GEOMETRY_TYPE_MULTIPOLYGON, append_point, append_linestring, create_geometry_builder_point, create_geometry_builder_points, create_geometry_builder_linestring, create_geometry_builder_multilinestring, create_geometry_builder_polygon, append_multilinestring, append_polygon, append_multipoint};
 
 /// Converts a `ColumnarValue` containing Arrow arrays to a vector of GEOS `Geometry` objects.
 ///
@@ -508,7 +498,18 @@ fn convert(struct_array: &StructArray) -> Result<Result<Vec<Geometry>, DataFusio
 /// This function will return an error if:
 /// * The geometry type is unsupported.
 pub fn geos_to_arrow(geometries: &[Geometry]) -> Result<ColumnarValue, DataFusionError> {
-    let mut geometry_builder = create_geometry_builder();
+    if geometries.is_empty() {
+        return Err(DataFusionError::Internal("Empty geometries array".to_string()));
+    }
+
+    let mut geometry_builder = match geometries[0].geometry_type() {
+        geos::GeometryTypes::Point => create_geometry_builder_point(),
+        geos::GeometryTypes::MultiPoint => create_geometry_builder_points(),
+        geos::GeometryTypes::LineString => create_geometry_builder_linestring(),
+        geos::GeometryTypes::MultiLineString => create_geometry_builder_multilinestring(),
+        geos::GeometryTypes::Polygon => create_geometry_builder_polygon(),
+        _ => return Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
+    };
 
     for geom in geometries {
         match geom.geometry_type() {
@@ -519,14 +520,18 @@ pub fn geos_to_arrow(geometries: &[Geometry]) -> Result<ColumnarValue, DataFusio
                 append_point(&mut geometry_builder, x, y);
             }
             geos::GeometryTypes::MultiPoint => {
-                let num_geometries = geom.get_num_geometries().map_err(|e| DataFusionError::Internal(e.to_string()))?;
-                for i in 0..num_geometries {
+                let num_points = geom.get_num_geometries().map_err(|e| DataFusionError::Internal(e.to_string()))?;
+                let mut x_coords = Vec::with_capacity(num_points);
+                let mut y_coords = Vec::with_capacity(num_points);
+                for i in 0..num_points {
                     let point = geom.get_geometry_n(i).map_err(|e| DataFusionError::Internal(e.to_string()))?;
                     let coords = point.get_coord_seq().map_err(|e| DataFusionError::Internal(e.to_string()))?;
                     let x = coords.get_x(0).map_err(|e| DataFusionError::Internal(e.to_string()))?;
                     let y = coords.get_y(0).map_err(|e| DataFusionError::Internal(e.to_string()))?;
-                    append_point(&mut geometry_builder, x, y);
+                    x_coords.push(x);
+                    y_coords.push(y);
                 }
+                append_multipoint(&mut geometry_builder, x_coords, y_coords);
             }
             geos::GeometryTypes::LineString => {
                 let coords = geom.get_coord_seq().map_err(|e| DataFusionError::Internal(e.to_string()))?;
@@ -555,7 +560,7 @@ pub fn geos_to_arrow(geometries: &[Geometry]) -> Result<ColumnarValue, DataFusio
                         x_coords.push(x);
                         y_coords.push(y);
                     }
-                    append_linestring(&mut geometry_builder, x_coords, y_coords);
+                    append_multilinestring(&mut geometry_builder, vec![(x_coords, y_coords)]);
                 }
             }
             geos::GeometryTypes::Polygon => {
@@ -570,7 +575,7 @@ pub fn geos_to_arrow(geometries: &[Geometry]) -> Result<ColumnarValue, DataFusio
                     x_coords.push(x);
                     y_coords.push(y);
                 }
-                append_linestring(&mut geometry_builder, x_coords, y_coords);
+                append_polygon(&mut geometry_builder, vec![(x_coords, y_coords)]);
             }
             geos::GeometryTypes::MultiPolygon => {
                 let num_geometries = geom.get_num_geometries().map_err(|e| DataFusionError::Internal(e.to_string()))?;
@@ -589,6 +594,75 @@ pub fn geos_to_arrow(geometries: &[Geometry]) -> Result<ColumnarValue, DataFusio
                     }
                     append_linestring(&mut geometry_builder, x_coords, y_coords);
                 }
+            }
+            _ => return Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
+        }
+    }
+
+    let geometry_array = geometry_builder.finish();
+
+    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
+}
+
+pub fn geo_to_arrow(geometries: &[geo::Geometry]) -> Result<ColumnarValue, DataFusionError> {
+    if geometries.is_empty() {
+        return Err(DataFusionError::Internal("Empty geometries array".to_string()));
+    }
+
+    let mut geometry_builder = match geometries[0] {
+        geo::Geometry::Point(_) => create_geometry_builder_point(),
+        geo::Geometry::MultiPoint(_) => create_geometry_builder_points(),
+        geo::Geometry::LineString(_) => create_geometry_builder_linestring(),
+        geo::Geometry::MultiLineString(_) => create_geometry_builder_multilinestring(),
+        geo::Geometry::Polygon(_) => create_geometry_builder_polygon(),
+        _ => return Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
+    };
+
+    for geom in geometries {
+        match geom {
+            geo::Geometry::Point(point) => {
+                let x = point.x();
+                let y = point.y();
+                append_point(&mut geometry_builder, x, y);
+            }
+            geo::Geometry::MultiPoint(multi_point) => {
+                let mut x_coords = Vec::with_capacity(multi_point.0.len());
+                let mut y_coords = Vec::with_capacity(multi_point.0.len());
+                for point in &multi_point.0 {
+                    x_coords.push(point.x());
+                    y_coords.push(point.y());
+                }
+                append_multipoint(&mut geometry_builder, x_coords, y_coords);
+            }
+            geo::Geometry::LineString(line_string) => {
+                let mut x_coords = Vec::with_capacity(line_string.0.len());
+                let mut y_coords = Vec::with_capacity(line_string.0.len());
+                for coord in &line_string.0 {
+                    x_coords.push(coord.x);
+                    y_coords.push(coord.y);
+                }
+                append_linestring(&mut geometry_builder, x_coords, y_coords);
+            }
+            geo::Geometry::MultiLineString(multi_line_string) => {
+                for line_string in &multi_line_string.0 {
+                    let mut x_coords = Vec::with_capacity(line_string.0.len());
+                    let mut y_coords = Vec::with_capacity(line_string.0.len());
+                    for coord in &line_string.0 {
+                        x_coords.push(coord.x);
+                        y_coords.push(coord.y);
+                    }
+                    append_multilinestring(&mut geometry_builder, vec![(x_coords, y_coords)]);
+                }
+            }
+            geo::Geometry::Polygon(polygon) => {
+                let exterior = &polygon.exterior();
+                let mut x_coords = Vec::with_capacity(exterior.0.len());
+                let mut y_coords = Vec::with_capacity(exterior.0.len());
+                for coord in &exterior.0 {
+                    x_coords.push(coord.x);
+                    y_coords.push(coord.y);
+                }
+                append_polygon(&mut geometry_builder, vec![(x_coords, y_coords)]);
             }
             _ => return Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
         }

@@ -979,6 +979,7 @@ dependencies = [
  "arrow-array",
  "arrow-data",
  "arrow-schema",
+ "byteorder",
  "chrono",
  "chrono-tz 0.8.6",
  "criterion",
