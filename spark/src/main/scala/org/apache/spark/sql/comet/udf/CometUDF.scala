@@ -196,7 +196,15 @@ class CometUDF {
       // This is a stub implementation
       override def call(wkt: Row): Row = Row.empty
     },
-    DataTypes.BooleanType)
+    DataTypes.createStructType(GEOMETRY))
+
+  val st_geomfromwkb: UserDefinedFunction = udf(
+    new UDF1[Row, Row] {
+      // Implement the logic to create a geometry from the well-known binary (WKB) representation
+      // This is a stub implementation
+      override def call(wkt: Row): Row = Row.empty
+    },
+    DataTypes.createStructType(GEOMETRY))
 
   // Define the st_point UDF to accept two Double parameters (x and y)
   // This UDF returns an empty Row as a stub implementation
@@ -253,6 +261,7 @@ class CometUDF {
     spark.udf.register("st_intersects2", st_intersects2)
     spark.udf.register("st_intersects3", st_intersects3)
     spark.udf.register("st_geomfromwkt", st_geomfromwkt)
+    spark.udf.register("st_geomfromwkb", st_geomfromwkb)
     spark.udf.register("st_within", st_within)
     spark.udf.register("st_contains", st_contains)
     spark.udf.register("st_envelope", st_envelope)
