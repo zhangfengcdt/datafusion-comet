@@ -38,7 +38,7 @@ use crate::scalar_funcs::geometry_helpers::{
     GEOMETRY_TYPE_LINESTRING,
     GEOMETRY_TYPE_POLYGON,
 };
-use crate::scalar_funcs::geos_helpers::{arrow_to_geo, geo_to_arrow};
+use crate::scalar_funcs::geo_helpers::{arrow_to_geo, geo_to_arrow};
 use crate::scalar_funcs::wkb::read_wkb;
 
 pub fn spark_st_point(
