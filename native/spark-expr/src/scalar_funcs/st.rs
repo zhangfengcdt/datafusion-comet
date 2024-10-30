@@ -21,8 +21,8 @@ use arrow_array::{Array, BinaryArray, Float64Array, ListArray, StringArray, Stru
 use arrow_schema::{DataType};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::{DataFusionError, ScalarValue};
+use wkt::TryFromWkt;
 use geo::{BoundingRect, Contains, Intersects, Within};
-use geos::{Geom, Geometry};
 use crate::scalar_funcs::geometry_helpers::{
     create_geometry_builder_point,
     create_geometry_builder_linestring,
@@ -38,7 +38,7 @@ use crate::scalar_funcs::geometry_helpers::{
     GEOMETRY_TYPE_LINESTRING,
     GEOMETRY_TYPE_POLYGON,
 };
-use crate::scalar_funcs::geos_helpers::{arrow_to_geo, arrow_to_geos, geo_to_arrow, geos_to_arrow};
+use crate::scalar_funcs::geos_helpers::{arrow_to_geo, geo_to_arrow};
 use crate::scalar_funcs::wkb::read_wkb;
 
 pub fn spark_st_point(
@@ -409,14 +409,14 @@ pub fn spark_st_geomfromwkt(
         }
     };
 
-    // Create the GEOS geometry objects from the WKT strings
-    let geoms: Result<Vec<Geometry>, DataFusionError> = wkt_strings.iter()
-        .map(|wkt_str| Geometry::new_from_wkt(wkt_str)
+    // Create the GEO geometry objects from the WKT strings
+    let geoms: Result<Vec<geo::Geometry>, DataFusionError> = wkt_strings.iter()
+        .map(|wkt_str| geo::Geometry::try_from_wkt_str(wkt_str)
             .map_err(|e| DataFusionError::Internal(format!("Failed to create geometry from WKT: {:?}", e))))
         .collect();
 
-    // Convert the GEOS geometry objects back to an Arrow array
-    let arrow_array = geos_to_arrow(&geoms?)
+    // Convert the GEO geometry objects back to an Arrow array
+    let arrow_array = geo_to_arrow(&geoms?)
         .map_err(|e| DataFusionError::Internal(format!("Failed to convert geometry to Arrow array: {:?}", e)))?;
 
     Ok(arrow_array)
@@ -581,39 +581,6 @@ pub fn spark_st_intersects(
     Ok(ColumnarValue::Array(Arc::new(boolean_array)))
 }
 
-pub fn spark_st_intersects_use_geos(
-    args: &[ColumnarValue],
-    _data_type: &DataType,
-) -> Result<ColumnarValue, DataFusionError> {
-    // Ensure there are exactly two arguments
-    if args.len() != 2 {
-        return Err(DataFusionError::Internal(
-            "Expected exactly two arguments".to_string(),
-        ));
-    }
-
-    // Extract the geometries from the arguments
-    let geom1 = &args[0];
-    let geom2 = &args[1];
-
-    // Call the geometry_to_geos function
-    let geos_geom_array1 = arrow_to_geos(&geom1).unwrap();
-    let geos_geom_array2 = arrow_to_geos(&geom2).unwrap();
-
-    // Call the intersects function on the geometries from array1 and array2 on each element
-    let mut boolean_builder = BooleanBuilder::new();
-    // the zip function is used to iterate over both geometry arrays simultaneously, and the intersects function is applied to each pair of geometries.
-    // This approach leverages vectorization by processing the arrays in a batch-oriented manner, which can be more efficient than processing each element individually.
-    for (g1, g2) in geos_geom_array1.iter().zip(geos_geom_array2.iter()) {
-        let intersects = g1.intersects(g2).unwrap();
-        boolean_builder.append_value(intersects);
-    }
-
-    // Finalize the BooleanArray and return the result
-    let boolean_array = boolean_builder.finish();
-    Ok(ColumnarValue::Array(Arc::new(boolean_array)))
-}
-
 pub fn spark_st_intersects_use_geo(
     args: &[ColumnarValue],
     _data_type: &DataType,
@@ -723,9 +690,7 @@ mod tests {
     use arrow::datatypes::{DataType, Field};
     use datafusion::physical_plan::ColumnarValue;
     use arrow_array::{BooleanArray, StringArray};
-    use geos::{CoordSeq, Geometry};
     use crate::scalar_funcs::geometry_helpers::{append_linestring, create_geometry_builder};
-    use crate::scalar_funcs::geos_helpers::geos_to_arrow;
 
     #[test]
     fn test_spark_st_envelope() {
@@ -926,33 +891,6 @@ mod tests {
         if let ColumnarValue::Array(array) = result {
             let result_array = array.as_any().downcast_ref::<BooleanArray>().unwrap();
             assert_eq!(result_array.value(0), true); // Linestrings intersect
-        } else {
-            panic!("Expected array result");
-        }
-    }
-
-    #[test]
-    fn test_spark_st_intersects_with_points() {
-
-        // Create sample Point geometry
-        let coord_seq = CoordSeq::new_from_vec(&[[1.0, 2.0]]).unwrap();
-        let point_geom = Geometry::create_point(coord_seq).unwrap();
-
-        // Convert geometries to ColumnarValue
-        let geometries = vec![Clone::clone(&point_geom),
-                              Clone::clone(&point_geom),
-                              Clone::clone(&point_geom),
-                              Clone::clone(&point_geom)
-        ];
-        let geom_array = geos_to_arrow(&geometries).unwrap();
-
-        // Call the spark_st_intersects function
-        let result = spark_st_intersects(&[geom_array.clone(), geom_array.clone()], &DataType::Boolean).unwrap();
-
-        // Assert the result is as expected
-        if let ColumnarValue::Array(array) = result {
-            let result_array = array.as_any().downcast_ref::<BooleanArray>().unwrap();
-            assert_eq!(result_array.value(0), true); // First point intersects with itself
         } else {
             panic!("Expected array result");
         }

@@ -997,6 +997,7 @@ dependencies = [
  "s2",
  "thiserror",
  "twox-hash",
+ "wkt 0.11.1",
 ]
 
 [[package]]
@@ -1601,7 +1602,7 @@ dependencies = [
  "geos-sys",
  "libc",
  "num",
- "wkt",
+ "wkt 0.10.3",
 ]
 
 [[package]]
@@ -3567,6 +3568,18 @@ name = "wkt"
 version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3c2252781f8927974e8ba6a67c965a759a2b88ea2b1825f6862426bbb1c8f41"
+dependencies = [
+ "geo-types",
+ "log",
+ "num-traits",
+ "thiserror",
+]
+
+[[package]]
+name = "wkt"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54f7f1ff4ea4c18936d6cd26a6fd24f0003af37e951a8e0e8b9e9a2d0bd0a46d"
 dependencies = [
  "geo-types",
  "log",

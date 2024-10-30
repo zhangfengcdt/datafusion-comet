@@ -41,6 +41,7 @@ regex = { workspace = true }
 thiserror = { workspace = true }
 geos = { workspace = true }
 geo = { workspace = true }
+wkt = { workspace = true }
 s2 = { workspace = true }
 byteorder = { workspace = true }
 rayon = { workspace = true }
