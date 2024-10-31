@@ -204,7 +204,7 @@ class CometUDF {
       // This is a stub implementation
       override def call(wkt: Row): Row = Row.empty
     },
-    DataTypes.createStructType(GEOMETRY))
+    DataTypes.createStructType(GEOMETRY_POINT))
 
   // Define the st_point UDF to accept two Double parameters (x and y)
   // This UDF returns an empty Row as a stub implementation

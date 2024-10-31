@@ -17,7 +17,8 @@
 
 use std::sync::Arc;
 use arrow_array::builder::{BooleanBuilder};
-use arrow_array::{Array, BinaryArray, Float64Array, ListArray, StringArray, StructArray};
+use arrow_array::{Array, BinaryArray, DictionaryArray, Float64Array, ListArray, StringArray, StructArray};
+use arrow_array::types::Int32Type;
 use arrow_schema::{DataType};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::{DataFusionError, ScalarValue};
@@ -436,11 +437,21 @@ pub fn spark_st_geomfromwkb(
     // Extract the WKB binaries from the argument
     let wkb_value = &args[0];
     let wkb_binaries: Vec<Vec<u8>> = match wkb_value {
-        ColumnarValue::Array(array) => array.as_any().downcast_ref::<BinaryArray>()
-            .ok_or_else(|| DataFusionError::Internal(format!("Expected binary input for WKB, but got {:?}", array.data_type())))?
-            .iter()
-            .map(|wkb| wkb.unwrap().to_vec())
-            .collect(),
+        ColumnarValue::Array(array) => {
+            if let Some(dict_array) = array.as_any().downcast_ref::<DictionaryArray<Int32Type>>() {
+                let values = dict_array.values().as_any().downcast_ref::<BinaryArray>().unwrap();
+                dict_array.keys().iter().map(|key| {
+                    let key = key.unwrap();
+                    values.value(key as usize).to_vec()
+                }).collect()
+            } else {
+                array.as_any().downcast_ref::<BinaryArray>()
+                    .ok_or_else(|| DataFusionError::Internal(format!("Expected binary input for WKB, but got {:?}", array.data_type())))?
+                    .iter()
+                    .map(|wkb| wkb.unwrap().to_vec())
+                    .collect()
+            }
+        },
         ColumnarValue::Scalar(scalar) => match scalar {
             ScalarValue::Binary(Some(value)) => vec![value.clone()],
             _ => return Err(DataFusionError::Internal(format!("Expected binary scalar input for WKB, but got {:?}", scalar))),

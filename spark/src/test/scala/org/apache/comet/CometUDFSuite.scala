@@ -19,13 +19,11 @@
 
 package org.apache.comet
 
-import java.lang.Thread.sleep
 import java.nio.file.{Files, Paths}
 
 import org.apache.spark.sql.{CometTestBase, Row}
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
-import org.apache.spark.sql.execution.debug.DebugQuery
-import org.apache.spark.sql.functions.{array_repeat, explode, lit}
+import org.apache.spark.sql.types.Metadata
 
 class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
 
@@ -361,8 +359,8 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
 
     // Read the table from an existing Parquet file
     val dfOrg = spark.read.parquet(
-      "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted_coalesced_100M")
-//      "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted/k=0/n=0")
+//      "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted_coalesced_100M")
+      "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted/k=0/n=0")
     dfOrg.createOrReplaceTempView(table)
 
     val point = "st_point(ptx, pty)"
@@ -392,6 +390,44 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
 
     val resultDf = sql(s"""
       SELECT COUNT(geo) FROM (SELECT st_envelope(geomA) AS geo FROM test_intersects_view)
+    """)
+
+    resultDf.explain(false)
+    resultDf.printSchema()
+
+    // Record the start time
+    val startTime = System.nanoTime()
+    resultDf.show()
+    // Record the end time
+    val endTime = System.nanoTime()
+
+    // Calculate the elapsed time
+    val elapsedTime = (endTime - startTime) / 1e9 // Convert to seconds
+
+    // Print the elapsed time
+    println(s"Query executed in $elapsedTime seconds")
+  }
+
+  test("st_intersects of wkb geometry udf support") {
+    val table = "test_wkb"
+
+    // Read the table from an existing Parquet file
+    val dfOrg = spark.read.parquet(
+      "/Users/feng/github/datafusion-comet/spark-warehouse/geoparquet_point/10M")
+    dfOrg.createOrReplaceTempView(table)
+    // dfOrg.describe().show()
+    dfOrg.printSchema()
+
+    val df = sql(s"""
+      SELECT name, geometry
+      FROM $table
+    """)
+
+    df.printSchema()
+    df.createOrReplaceTempView("test_wkb_view")
+
+    val resultDf = sql(s"""
+      select count(name), count(geom) from (SELECT name, st_geomfromwkb(geometry) as geom FROM test_wkb_view)
     """)
 
     resultDf.explain(false)
@@ -457,8 +493,6 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
     // Write the DataFrame back as Parquet
     df.coalesce(16).write.mode("overwrite").parquet(outputParquetPath)
   }
-
-  import scala.util.Random
 
   def insertRandomRowsForPointPolygon(
       table: String,

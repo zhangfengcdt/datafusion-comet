@@ -237,7 +237,11 @@ pub fn geo_to_arrow(geometries: &[geo::Geometry]) -> Result<ColumnarValue, DataF
         geo::Geometry::LineString(_) => create_geometry_builder_linestring(),
         geo::Geometry::MultiLineString(_) => create_geometry_builder_multilinestring(),
         geo::Geometry::Polygon(_) => create_geometry_builder_polygon(),
-        _ => return Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
+        geo::Geometry::GeometryCollection(_) => return Err(DataFusionError::Internal("Unsupported geometry type: GeometryCollection".to_string())),
+        geo::Geometry::Rect(_) => return Err(DataFusionError::Internal("Unsupported geometry type: Rect".to_string())),
+        geo::Geometry::Triangle(_) => return Err(DataFusionError::Internal("Unsupported geometry type: Triangle".to_string())),
+        geo::Geometry::Line(_) => return Err(DataFusionError::Internal("Unsupported geometry type: Line".to_string())),
+        geo::Geometry::MultiPolygon(_) => return Err(DataFusionError::Internal("Unsupported geometry type: MultiPolygon".to_string())),
     };
 
     for geom in geometries {
