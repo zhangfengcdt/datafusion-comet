@@ -24,7 +24,8 @@ use datafusion_comet_spark_expr::scalar_funcs::{
     spark_isnan, spark_make_decimal, spark_murmur3_hash, spark_read_side_padding, spark_round,
     spark_unhex, spark_unscaled_value, spark_xxhash64, SparkChrFunc,
     spark_st_envelope, spark_st_point, spark_st_points, spark_st_linestring, spark_st_multilinestring, spark_st_polygon,
-    spark_st_intersects, spark_st_intersects_use_geo, spark_st_geomfromwkt, spark_st_geomfromwkb,
+    spark_st_intersects, spark_st_intersects_use_geo, spark_st_intersects_wkb,
+    spark_st_geomfromwkt, spark_st_geomfromwkb,
     spark_st_contains, spark_st_within,
 };
 use datafusion_common::{DataFusionError, Result as DataFusionResult};
@@ -87,6 +88,9 @@ pub fn create_comet_physical_fun(
         }
         "st_intersects3" => {
             make_comet_scalar_udf!("st_intersects3", spark_st_intersects_use_geo, data_type)
+        }
+        "st_intersects_wkb" => {
+            make_comet_scalar_udf!("st_intersects_wkb", spark_st_intersects_wkb, data_type)
         }
         "st_geomfromwkt" => {
             make_comet_scalar_udf!("st_geomfromwkt", spark_st_geomfromwkt, data_type)

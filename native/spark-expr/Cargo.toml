@@ -46,6 +46,7 @@ s2 = { workspace = true }
 byteorder = { workspace = true }
 rayon = { workspace = true }
 rand_chacha = "0.3.1"
+tokio = "1.40.0"
 
 [dev-dependencies]
 arrow-data = {workspace = true}

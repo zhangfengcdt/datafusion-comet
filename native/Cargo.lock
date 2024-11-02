@@ -990,6 +990,7 @@ dependencies = [
  "regex",
  "s2",
  "thiserror",
+ "tokio",
  "twox-hash",
  "wkt",
 ]

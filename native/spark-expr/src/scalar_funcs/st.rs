@@ -39,7 +39,7 @@ use crate::scalar_funcs::geometry_helpers::{
     GEOMETRY_TYPE_LINESTRING,
     GEOMETRY_TYPE_POLYGON,
 };
-use crate::scalar_funcs::geo_helpers::{arrow_to_geo, geo_to_arrow};
+use crate::scalar_funcs::geo_helpers::{arrow_to_geo, arrow_to_geo_scalar, geo_to_arrow, geo_to_arrow_scalar};
 use crate::scalar_funcs::wkb::read_wkb;
 
 pub fn spark_st_point(
@@ -399,13 +399,31 @@ pub fn spark_st_geomfromwkt(
     // Extract the WKT strings from the argument
     let wkt_value = &args[0];
     let wkt_strings: Vec<String> = match wkt_value {
-        ColumnarValue::Array(array) => array.as_any().downcast_ref::<StringArray>()
-            .ok_or_else(|| DataFusionError::Internal(format!("Expected string input for WKT, but got {:?}", array.data_type())))?
-            .iter()
-            .map(|wkt| wkt.unwrap().to_string())
-            .collect(),
+        ColumnarValue::Array(array) => {
+            if let Some(dict_array) = array.as_any().downcast_ref::<DictionaryArray<Int32Type>>() {
+                let values = dict_array.values().as_any().downcast_ref::<StringArray>().unwrap();
+                dict_array.keys().iter().map(|key| {
+                    let key = key.unwrap();
+                    values.value(key as usize).to_string()
+                }).collect()
+            } else {
+                array.as_any().downcast_ref::<StringArray>()
+                    .ok_or_else(|| DataFusionError::Internal(format!("Expected string input for WKT, but got {:?}", array.data_type())))?
+                    .iter()
+                    .map(|wkt| wkt.unwrap().to_string())
+                    .collect()
+            }
+        },
         ColumnarValue::Scalar(scalar) => match scalar {
-            ScalarValue::Utf8(Some(value)) => vec![value.clone()],
+            ScalarValue::Utf8(Some(value)) => {
+                let geom = geo::Geometry::try_from_wkt_str(value)
+                    .map_err(|e| DataFusionError::Internal(format!("Failed to create geometry from WKT: {:?}", e)))?;
+
+                let arrow_scalar = geo_to_arrow_scalar(&geom)
+                    .map_err(|e| DataFusionError::Internal(format!("Failed to convert geometry to Arrow array: {:?}", e)))?;
+
+                return Ok(arrow_scalar)
+            },
             _ => return Err(DataFusionError::Internal(format!("Expected Utf8 scalar input for WKT, but got {:?}", scalar))),
         }
     };
@@ -626,6 +644,68 @@ pub fn spark_st_intersects_use_geo(
     Ok(ColumnarValue::Array(Arc::new(boolean_array)))
 }
 
+pub fn spark_st_intersects_wkb(
+    args: &[ColumnarValue],
+    _data_type: &DataType,
+) -> Result<ColumnarValue, DataFusionError> {
+    // Ensure there are exactly two arguments
+    if args.len() != 2 {
+        return Err(DataFusionError::Internal(
+            "Expected exactly two arguments".to_string(),
+        ));
+    }
+
+    // Extract the WKB binaries from the argument
+    let wkb_value = &args[0];
+    let wkb_binaries: Vec<Vec<u8>> = match wkb_value {
+        ColumnarValue::Array(array) => {
+            if let Some(dict_array) = array.as_any().downcast_ref::<DictionaryArray<Int32Type>>() {
+                let values = dict_array.values().as_any().downcast_ref::<BinaryArray>().unwrap();
+                dict_array.keys().iter().map(|key| {
+                    let key = key.unwrap();
+                    values.value(key as usize).to_vec()
+                }).collect()
+            } else {
+                array.as_any().downcast_ref::<BinaryArray>()
+                    .ok_or_else(|| DataFusionError::Internal(format!("Expected binary input for WKB, but got {:?}", array.data_type())))?
+                    .iter()
+                    .map(|wkb| wkb.unwrap().to_vec())
+                    .collect()
+            }
+        },
+        ColumnarValue::Scalar(scalar) => match scalar {
+            ScalarValue::Binary(Some(value)) => vec![value.clone()],
+            _ => return Err(DataFusionError::Internal(format!("Expected binary scalar input for WKB, but got {:?}", scalar))),
+        }
+    };
+
+    // Create GEO geometry objects from the WKB binaries
+    let geoms: Result<Vec<geo::Geometry>, DataFusionError> = wkb_binaries.iter()
+        .map(|wkb_bin| {
+            read_wkb(wkb_bin)
+                .map_err(|e| DataFusionError::Internal(format!("Failed to create geometry from WKB: {:?}", e)))
+        })
+        .collect();
+
+    // Call the geometry_to_geos function
+    let geos_geom_array1 = geoms?;
+
+    let geom2 = &args[1];
+    let geos_geom2 = arrow_to_geo_scalar(&geom2).unwrap();
+
+    // Call the intersects function on the geometries from array1 and array2 on each element
+    let mut boolean_builder = BooleanBuilder::new();
+
+    for g1 in geos_geom_array1.iter() {
+        let intersects = g1.intersects(&geos_geom2);
+        boolean_builder.append_value(intersects);
+    }
+
+    // Finalize the BooleanArray and return the result
+    let boolean_array = boolean_builder.finish();
+    Ok(ColumnarValue::Array(Arc::new(boolean_array)))
+}
+
 pub fn spark_st_within(
     args: &[ColumnarValue],
     _data_type: &DataType,
@@ -700,7 +780,7 @@ mod tests {
     use arrow::array::{Float64Array, StructArray};
     use arrow::datatypes::{DataType, Field};
     use datafusion::physical_plan::ColumnarValue;
-    use arrow_array::{BooleanArray, StringArray};
+    use arrow_array::{ArrayRef, BooleanArray, StringArray};
     use crate::scalar_funcs::geometry_helpers::{append_linestring, create_geometry_builder};
 
     #[test]
@@ -911,8 +991,7 @@ mod tests {
     fn test_spark_st_geomfromwkt() {
         // Create sample WKT strings
         let wkts = vec![
-            "LINESTRING (0 0, 1 1, 2 2, 3 3, 4 4, 5 5, 6 6, 7 7, 8 8, 9 9)",
-            "LINESTRING (10 10, 11 11, 12 12, 13 13, 14 14, 15 15, 16 16, 17 17, 18 18, 19 19)"
+            "POLYGON((-118.58307129967345 34.31439167411405,-118.6132837020172 33.993916507403284,-118.3880639754547 33.708792488814765,-117.64374024498595 33.43188776025067,-117.6135278426422 33.877700857313904,-117.64923340904845 34.19407205090323,-118.14911133873595 34.35748320631873,-118.58307129967345 34.31439167411405))"
         ];
         let wkt_array = StringArray::from(wkts.clone());
 
@@ -931,6 +1010,33 @@ mod tests {
             }
         } else {
             panic!("Expected geometry to be linestring");
+        }
+    }
+
+    #[test]
+    fn test_spark_st_geomfromwkt_scalar() {
+        // Create a sample WKT string
+        let wkt = "POLYGON((-118.58307129967345 34.31439167411405,-118.6132837020172 33.993916507403284,-118.3880639754547 33.708792488814765,-117.64374024498595 33.43188776025067,-117.6135278426422 33.877700857313904,-117.64923340904845 34.19407205090323,-118.14911133873595 34.35748320631873,-118.58307129967345 34.31439167411405))";
+
+        // Convert to ColumnarValue::Scalar
+        let wkt_value = ColumnarValue::Scalar(ScalarValue::Utf8(Some(wkt.to_string())));
+
+        // Call the spark_st_geomfromwkt function
+        let result = spark_st_geomfromwkt(&[wkt_value], &DataType::Null).unwrap();
+
+        // Assert the result is as expected
+        if let ColumnarValue::Scalar(scalar) = result {
+            // Perform necessary assertions on the scalar
+            // For example, check the type and contents of the scalar
+            if let ScalarValue::Struct(struct_scalar) = scalar {
+                let struct_array = struct_scalar.as_any().downcast_ref::<StructArray>().unwrap();
+                assert_eq!(struct_array.len(), 1);
+                // Add more assertions as needed
+            } else {
+                panic!("Expected ScalarValue::Struct");
+            }
+        } else {
+            panic!("Expected scalar result");
         }
     }
 
@@ -974,5 +1080,49 @@ mod tests {
         } else {
             panic!("Expected array result");
         }
+    }
+
+    #[test]
+    fn test_spark_st_intersects_wkb() {
+        // Define WKB for two geometries that intersect
+        // Create sample WKB binaries
+        let wkb1: Vec<u8> = vec![
+            0x01, // little endian
+            0x01, 0x00, 0x00, 0x80, // type 1 = point with Z flag
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0x3F, // x = 1.0
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, // y = 2.0
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x40, // z = 3.0 (ignored)
+        ];
+
+        // Create a sample WKT string representing a polygon
+        let wkt = "POLYGON((0 0, 0 3, 3 3, 3 0, 0 0))";
+
+        // Convert to ColumnarValue::Scalar
+        let wkt_value = ColumnarValue::Scalar(ScalarValue::Utf8(Some(wkt.to_string())));
+
+        // Call the spark_st_geomfromwkt function
+        let geom2 = spark_st_geomfromwkt(&[wkt_value], &DataType::Null).unwrap();
+
+        // Create BinaryArray from WKB using BinaryBuilder
+        let mut builder1 = BinaryBuilder::new();
+        builder1.append_value(&wkb1);
+        let wkb_array1: ArrayRef = Arc::new(builder1.finish());
+
+        // Create ColumnarValue from BinaryArray
+        let args = vec![
+            ColumnarValue::Array(wkb_array1),
+            geom2,
+        ];
+
+        // Call the function
+        let result = spark_st_intersects_wkb(&args, &DataType::Boolean).unwrap();
+
+        // Downcast the result to BooleanArray and check the values
+        let result_array = result.into_array(1);
+        let binding = result_array.expect("REASON");
+        let boolean_array = binding.as_any().downcast_ref::<BooleanArray>().unwrap();
+
+        // Assert the result
+        assert_eq!(boolean_array.value(0), true);
     }
 }
