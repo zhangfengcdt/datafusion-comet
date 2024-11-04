@@ -412,8 +412,9 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
     val table = "test_wkb"
 
     // Read the table from an existing Parquet file
+    // osm-nodes-large, overture-buildings-large, postal-codes
     val dfOrg =
-      spark.read.parquet("/Users/feng/github/datafusion-comet/spark-warehouse/osm-nodes-large")
+      spark.read.parquet("/Users/feng/github/datafusion-comet/spark-warehouse/postal-codes")
     dfOrg.createOrReplaceTempView(table)
     // dfOrg.describe().show()
     dfOrg.printSchema()
@@ -433,17 +434,9 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
 //        """)
 
     // large range
-//          val resultDf = sql(s"""
-//          select count(1), count(1) / (select count(1) from $table)  from $table where st_intersects_wkb(geometry, st_geomfromwkt('polygon ((-179.99989999978519 16.152429930674884, -179.99989999978519 71.86717445333835, -66.01355466931244 71.86717445333835, -66.01355466931244 16.152429930674884, -179.99989999978519 16.152429930674884))'))
-//        """)
-
     val resultDf = sql(s"""
-              select count(1), count(1) / (select count(1) from $table)  from $table where st_intersects3(st_geomfromwkb(geometry), st_geomfromwkt('polygon ((-179.99989999978519 16.152429930674884, -179.99989999978519 71.86717445333835, -66.01355466931244 71.86717445333835, -66.01355466931244 16.152429930674884, -179.99989999978519 16.152429930674884))'))
-            """)
-
-//    val resultDf = sql(s"""
-//      select geom.type from (select id, st_geomfromwkt('POLYGON((-118.58307129967345 34.31439167411405,-118.6132837020172 33.993916507403284,-118.3880639754547 33.708792488814765,-117.64374024498595 33.43188776025067,-117.6135278426422 33.877700857313904,-117.64923340904845 34.19407205090323,-118.14911133873595 34.35748320631873,-118.58307129967345 34.31439167411405))') as geom from $table)
-//    """)
+          select count(1), count(1) / (select count(1) from $table) from $table where st_intersects_wkb(geometry, st_geomfromwkt('polygon ((-179.99989999978519 16.152429930674884, -179.99989999978519 71.86717445333835, -66.01355466931244 71.86717445333835, -66.01355466931244 16.152429930674884, -179.99989999978519 16.152429930674884))'))
+        """)
 
     resultDf.explain(false)
     resultDf.printSchema()

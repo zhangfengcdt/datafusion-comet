@@ -40,7 +40,7 @@ arrow-data = { version = "53.1.0" }
 arrow-schema = { version = "53.1.0" }
 parquet = { version = "53.1.0", default-features = false, features = ["experimental"] }
 datafusion-common = { git = "https://github.com/apache/datafusion.git", rev = "3b6aac2" }
-datafusion = { git = "https://github.com/apache/datafusion.git", rev = "3b6aac2", default-features = false, features = ["unicode_expressions", "crypto_expressions"] }
+datafusion = { git = "https://github.com/apache/datafusion.git", rev = "3b6aac2", default-features = false, features = ["unicode_expressions", "crypto_expressions", "parquet"] }
 datafusion-functions = { git = "https://github.com/apache/datafusion.git", rev = "3b6aac2", features = ["crypto_expressions"] }
 datafusion-functions-nested = { git = "https://github.com/apache/datafusion.git", rev = "3b6aac2", default-features = false }
 datafusion-expr = { git = "https://github.com/apache/datafusion.git", rev = "3b6aac2", default-features = false }

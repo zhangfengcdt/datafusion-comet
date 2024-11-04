@@ -416,14 +416,14 @@ pub fn create_geometry_builder_polygon() -> StructBuilder {
     let type_builder = StringBuilder::new();
     let polygon_builder = get_list_of_list_of_points_schema(coordinate_fields.clone());
 
-    let geometry_linestring_builder = StructBuilder::new(
+    let geometry_polygon_builder = StructBuilder::new(
         get_geometry_fields_polygon(get_coordinate_fields().into()),
         vec![
             Box::new(type_builder) as Box<dyn ArrayBuilder>,
             Box::new(polygon_builder) as Box<dyn ArrayBuilder>,
         ],
     );
-    geometry_linestring_builder
+    geometry_polygon_builder
 }
 
 // Helper function to append null values to specified fields
