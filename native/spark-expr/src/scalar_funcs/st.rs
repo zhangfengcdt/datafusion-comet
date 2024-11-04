@@ -657,24 +657,24 @@ pub fn spark_st_intersects_wkb(
 
     // Extract the WKB binaries from the argument
     let wkb_value = &args[0];
-    let wkb_binaries: Vec<Vec<u8>> = match wkb_value {
+    let wkb_binaries: Vec<&[u8]> = match wkb_value {
         ColumnarValue::Array(array) => {
             if let Some(dict_array) = array.as_any().downcast_ref::<DictionaryArray<Int32Type>>() {
                 let values = dict_array.values().as_any().downcast_ref::<BinaryArray>().unwrap();
                 dict_array.keys().iter().map(|key| {
                     let key = key.unwrap();
-                    values.value(key as usize).to_vec()
+                    values.value(key as usize)
                 }).collect()
             } else {
                 array.as_any().downcast_ref::<BinaryArray>()
                     .ok_or_else(|| DataFusionError::Internal(format!("Expected binary input for WKB, but got {:?}", array.data_type())))?
                     .iter()
-                    .map(|wkb| wkb.unwrap().to_vec())
+                    .map(|wkb| wkb.unwrap())
                     .collect()
             }
         },
         ColumnarValue::Scalar(scalar) => match scalar {
-            ScalarValue::Binary(Some(value)) => vec![value.clone()],
+            ScalarValue::Binary(Some(value)) => vec![value.as_slice()],
             _ => return Err(DataFusionError::Internal(format!("Expected binary scalar input for WKB, but got {:?}", scalar))),
         }
     };
@@ -692,13 +692,16 @@ pub fn spark_st_intersects_wkb(
 
     let geom2 = &args[1];
     let geos_geom2 = arrow_to_geo_scalar(&geom2).unwrap();
+    let geom2_rect = geos_geom2.bounding_rect().unwrap();
 
     // Call the intersects function on the geometries from array1 and array2 on each element
-    let mut boolean_builder = BooleanBuilder::new();
+    let mut boolean_builder = BooleanBuilder::with_capacity(geos_geom_array1.len());
 
     for g1 in geos_geom_array1.iter() {
-        let intersects = g1.intersects(&geos_geom2);
-        boolean_builder.append_value(intersects);
+        let value = g1.bounding_rect().is_some_and(|g1_rect| {
+            g1_rect.intersects(&geom2_rect) && g1.intersects(&geos_geom2)
+        });
+        boolean_builder.append_value(value);
     }
 
     // Finalize the BooleanArray and return the result
