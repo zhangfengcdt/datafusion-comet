@@ -365,13 +365,16 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
 
     val point = "st_point(ptx, pty)"
     val linestring = "st_linestring(ptx-10, pty-10, ptx+10, pty+10)"
-    val polygon = "st_polygon(ptx-10, pty-10, ptx+10, pty+10)"
-    val polygon2 = "st_polygon(eminx, eminy, emaxx, emaxy)"
+//    val polygon = "st_polygon(ptx-10, pty-10, ptx+10, pty+10)"
+//    val polygon2 = "st_polygon(eminx, eminy, emaxx, emaxy)"
+
+    val polygon = "st_randompolygon(ptx, pty, CAST(1.0 AS DOUBLE), 10, id)"
+    val polygon2 = "st_randompolygon(ptx, pty, CAST(1.0 AS DOUBLE), 10, id + 1)"
 
     val df = sql(s"""
       SELECT id,
       $polygon as geomA,
-      $polygon as geomB
+      $polygon2 as geomB
       FROM $table
     """)
 

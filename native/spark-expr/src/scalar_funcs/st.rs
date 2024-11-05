@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 use arrow_array::builder::{BooleanBuilder};
-use arrow_array::{Array, BinaryArray, DictionaryArray, Float64Array, ListArray, StringArray, StructArray};
+use arrow_array::{Array, BinaryArray, DictionaryArray, Float64Array, Int32Array, Int64Array, ListArray, StringArray, StructArray};
 use arrow_array::types::Int32Type;
 use arrow_schema::{DataType};
 use datafusion::logical_expr::ColumnarValue;
@@ -385,6 +385,238 @@ pub fn spark_st_polygon(
     Ok(ColumnarValue::Array(Arc::new(geometry_array)))
 }
 
+pub fn spark_st_random_polygon(
+    args: &[ColumnarValue],
+    _data_type: &DataType,
+) -> Result<ColumnarValue, DataFusionError> {
+    // Ensure there are exactly 5 arguments (centerX, centerY, maxSize, numSegments, seed)
+    if args.len() != 5 {
+        return Err(DataFusionError::Internal(
+            "Expected exactly five arguments".to_string(),
+        ));
+    }
+
+    // Extract the arguments
+    let center_x_values = match &args[0] {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Float64Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for centerX, but got {:?}", array.data_type())))?,
+        _ => return Err(DataFusionError::Internal("Expected array input for centerX".to_string())),
+    };
+
+    let center_y_values = match &args[1] {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Float64Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for centerY, but got {:?}", array.data_type())))?,
+        _ => return Err(DataFusionError::Internal("Expected array input for centerY".to_string())),
+    };
+
+    let max_size_values = match &args[2] {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Float64Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for maxSize, but got {:?}", array.data_type())))?,
+        ColumnarValue::Scalar(scalar) => match scalar {
+            ScalarValue::Float64(Some(value)) => &Float64Array::from(vec![*value]),
+            _ => return Err(DataFusionError::Internal("Expected float64 input for maxSize".to_string())),
+        }
+    };
+
+    let num_segments_values = match &args[3] {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Int32Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected int32 input for numSegments, but got {:?}", array.data_type())))?,
+        ColumnarValue::Scalar(scalar) => match scalar {
+            ScalarValue::Int32(Some(value)) => &Int32Array::from(vec![*value]),
+            _ => return Err(DataFusionError::Internal("Expected int32 input for numSegments".to_string())),
+        }
+    };
+
+    let seed_values = match &args[4] {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Int64Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected int64 input for seed, but got {:?}", array.data_type())))?,
+        ColumnarValue::Scalar(scalar) => match scalar {
+            ScalarValue::Int32(Some(value)) => &Int64Array::from(vec![*value as i64]),
+            ScalarValue::Int64(Some(value)) => &Int64Array::from(vec![*value]),
+            _ => return Err(DataFusionError::Internal("Expected int32 or int64 input for seed".to_string())),
+        }
+    };
+
+    // Create the geometry builder
+    let mut geometry_builder = create_geometry_builder_polygon();
+
+    // Initialize vectors to hold angles, x_coords, and y_coords for reuse
+    let mut angles = Vec::new();
+
+    // Generate random polygon for each set of input values
+    for i in 0..center_x_values.len() {
+        let center_x = center_x_values.value(i);
+        let center_y = center_y_values.value(i);
+        let max_size = if max_size_values.len() > 1 { max_size_values.value(i) } else { max_size_values.value(0) };
+        let num_segments = if num_segments_values.len() > 1 { num_segments_values.value(i) } else { num_segments_values.value(0) };
+        let seed = if seed_values.len() > 1 { seed_values.value(i) } else { seed_values.value(0) };
+
+        // Create XORShiftRandom instance
+        let mut random = XORShiftRandom::new(seed);
+
+        // Generate random angles
+        angles.clear();
+        angles.reserve(num_segments as usize);
+        for _ in 0..num_segments {
+            angles.push(random.next_f64() * 2.0 * std::f64::consts::PI);
+        }
+        angles.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        // Generate coordinates
+        let mut x_coords = Vec::with_capacity((num_segments + 1) as usize); 
+        let mut y_coords = Vec::with_capacity((num_segments + 1) as usize);
+
+        for k in 0..num_segments {
+            let angle = angles[k as usize];
+            let distance = random.next_f64() * (max_size / 2.0);
+            let x = center_x + distance * angle.cos();
+            let y = center_y + distance * angle.sin();
+            x_coords.push(x);
+            y_coords.push(y);
+        }
+
+        // Close the polygon by adding the first point again
+        x_coords.push(x_coords[0]);
+        y_coords.push(y_coords[0]);
+
+        // Append the polygon to the builder
+        append_polygon(&mut geometry_builder, vec![(x_coords, y_coords)]);
+    }
+
+    // Finish the geometry builder and convert to an Arrow array
+    let geometry_array = geometry_builder.finish();
+
+    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
+}
+
+pub fn spark_st_random_linestring(
+    args: &[ColumnarValue],
+    _data_type: &DataType,
+) -> Result<ColumnarValue, DataFusionError> {
+    // Ensure there are exactly 5 arguments (startX, startY, maxSegmentSize, numSegments, seed)
+    if args.len() != 5 {
+        return Err(DataFusionError::Internal(
+            "Expected exactly five arguments".to_string(),
+        ));
+    }
+
+    // Extract the arguments
+    let start_x_values = match &args[0] {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Float64Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for startX, but got {:?}", array.data_type())))?,
+        _ => return Err(DataFusionError::Internal("Expected array input for startX".to_string())),
+    };
+
+    let start_y_values = match &args[1] {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Float64Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for startY, but got {:?}", array.data_type())))?,
+        _ => return Err(DataFusionError::Internal("Expected array input for startY".to_string())),
+    };
+
+    let max_segment_size_values = match &args[2] {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Float64Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected float64 input for maxSegmentSize, but got {:?}", array.data_type())))?,
+        ColumnarValue::Scalar(scalar) => match scalar {
+            ScalarValue::Float64(Some(value)) => &Float64Array::from(vec![*value]),
+            _ => return Err(DataFusionError::Internal("Expected float64 input for maxSegmentSize".to_string())),
+        }
+    };
+
+    let num_segments_values = match &args[3] {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Int32Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected int32 input for numSegments, but got {:?}", array.data_type())))?,
+        ColumnarValue::Scalar(scalar) => match scalar {
+            ScalarValue::Int32(Some(value)) => &Int32Array::from(vec![*value]),
+            _ => return Err(DataFusionError::Internal("Expected int32 input for numSegments".to_string())),
+        }
+    };
+
+    let seed_values = match &args[4] {
+        ColumnarValue::Array(array) => array.as_any().downcast_ref::<Int64Array>()
+            .ok_or_else(|| DataFusionError::Internal(format!("Expected int64 input for seed, but got {:?}", array.data_type())))?,
+        ColumnarValue::Scalar(scalar) => match scalar {
+            ScalarValue::Int32(Some(value)) => &Int64Array::from(vec![*value as i64]),
+            ScalarValue::Int64(Some(value)) => &Int64Array::from(vec![*value]),
+            _ => return Err(DataFusionError::Internal("Expected int32 or int64 input for seed".to_string())),
+        }
+    };
+
+    // Create the geometry builder
+    let mut geometry_builder = create_geometry_builder_linestring();
+
+    // Generate random linestring for each set of input values
+    for i in 0..start_x_values.len() {
+        let start_x = start_x_values.value(i);
+        let start_y = start_y_values.value(i);
+        let max_segment_size = if max_segment_size_values.len() > 1 { max_segment_size_values.value(i) } else { max_segment_size_values.value(0) };
+        let num_segments = if num_segments_values.len() > 1 { num_segments_values.value(i) } else { num_segments_values.value(0) };
+        let seed = if seed_values.len() > 1 { seed_values.value(i) } else { seed_values.value(0) };
+
+        // Create XORShiftRandom instance
+        let mut random = XORShiftRandom::new(seed);
+
+        // Generate coordinates
+        let mut x_coords = Vec::with_capacity((num_segments + 1) as usize);
+        let mut y_coords = Vec::with_capacity((num_segments + 1) as usize);
+
+        // Add starting point
+        x_coords.push(start_x);
+        y_coords.push(start_y);
+
+        // Generate subsequent points
+        for _ in 1..=num_segments {
+            let prev_x = *x_coords.last().unwrap();
+            let prev_y = *y_coords.last().unwrap();
+            
+            // Generate random offsets between -maxSegmentSize and maxSegmentSize
+            let x_offset = random.next_f64() * 2.0 * max_segment_size - max_segment_size;
+            let y_offset = random.next_f64() * 2.0 * max_segment_size - max_segment_size;
+            
+            x_coords.push(prev_x + x_offset);
+            y_coords.push(prev_y + y_offset);
+        }
+
+        // Append the linestring to the builder
+        append_linestring(&mut geometry_builder, x_coords, y_coords);
+    }
+
+    // Finish the geometry builder and convert to an Arrow array
+    let geometry_array = geometry_builder.finish();
+
+    Ok(ColumnarValue::Array(Arc::new(geometry_array)))
+}
+
+/// XORShiftRandom implements the same random number generator as Spark's XORShiftRandom
+struct XORShiftRandom {
+    seed: i64,
+}
+
+impl XORShiftRandom {
+    fn new(init: i64) -> Self {
+        XORShiftRandom {
+            seed: Self::hash_seed(init),
+        }
+    }
+
+    fn hash_seed(seed: i64) -> i64 {
+        (seed ^ 0x5DEECE66D) & ((1i64 << 48) - 1)
+    }
+
+    fn next(&mut self, bits: i32) -> i32 {
+        let mut next_seed = self.seed ^ (self.seed << 21);
+        next_seed ^= next_seed >> 35;
+        next_seed ^= next_seed << 4;
+        self.seed = next_seed;
+        (next_seed & ((1i64 << bits) - 1)) as i32
+    }
+
+    fn next_f64(&mut self) -> f64 {
+        // Combine two calls to next() to create a 53-bit precision float
+        let val = ((self.next(26) as i64) << 27) + (self.next(27) as i64);
+        val as f64 / (1i64 << 53) as f64
+    }
+}
+
 pub fn spark_st_geomfromwkt(
     args: &[ColumnarValue],
     _data_type: &DataType,
@@ -630,7 +862,7 @@ pub fn spark_st_intersects_use_geo(
     let geos_geom_array2 = arrow_to_geo(&geom2).unwrap();
 
     // Call the intersects function on the geometries from array1 and array2 on each element
-    let mut boolean_builder = BooleanBuilder::new();
+    let mut boolean_builder = BooleanBuilder::with_capacity(geos_geom_array1.len());
 
     // the zip function is used to iterate over both geometry arrays simultaneously, and the intersects function is applied to each pair of geometries.
     // This approach leverages vectorization by processing the arrays in a batch-oriented manner, which can be more efficient than processing each element individually.
@@ -1127,5 +1359,61 @@ mod tests {
 
         // Assert the result
         assert_eq!(boolean_array.value(0), true);
+    }
+
+    #[test]
+    fn test_spark_st_random_polygon() {
+        // Create sample x1, y1, x2, and y2 coordinates as Float64Array
+        let x_coords = Float64Array::from(vec![1.0, 2.0, 3.0]);
+        let y_coords = Float64Array::from(vec![4.0, 5.0, 6.0]);
+        let max_size = ScalarValue::Float64(Some(0.1));
+        let num_segments = ScalarValue::Int32(Some(3));
+        let seed = ScalarValue::Int64(Some(123));
+
+        // Convert to ColumnarValue
+        let x_value = ColumnarValue::Array(Arc::new(x_coords));
+        let y_value = ColumnarValue::Array(Arc::new(y_coords));
+        let max_size_value = ColumnarValue::Scalar(max_size);
+        let num_segments_value = ColumnarValue::Scalar(num_segments);
+        let seed_value = ColumnarValue::Scalar(seed);
+
+        // Call the spark_st_polygon function with x1, y1, x2, and y2 arguments
+        let result = spark_st_random_polygon(&[x_value, y_value, max_size_value, num_segments_value, seed_value], &DataType::Null).unwrap();
+
+        // Assert the result is as expected
+        if let ColumnarValue::Array(array) = result {
+            let result_array = array.as_any().downcast_ref::<StructArray>().unwrap();
+            assert_eq!(result_array.column(0).as_any().downcast_ref::<StringArray>().unwrap().value(0), "polygon"); // "type"
+        } else {
+            panic!("Expected geometry to be polygon");
+        }        
+    }
+
+    #[test]
+    fn test_spark_st_random_linestring() {
+        // Create sample x1, y1, x2, and y2 coordinates as Float64Array
+        let x_coords = Float64Array::from(vec![1.0, 2.0, 3.0]);
+        let y_coords = Float64Array::from(vec![4.0, 5.0, 6.0]);
+        let max_segment_size = ScalarValue::Float64(Some(0.1));
+        let num_segments = ScalarValue::Int32(Some(3));
+        let seed = ScalarValue::Int64(Some(123));
+
+        // Convert to ColumnarValue
+        let x_value = ColumnarValue::Array(Arc::new(x_coords));
+        let y_value = ColumnarValue::Array(Arc::new(y_coords));
+        let max_segment_size_value = ColumnarValue::Scalar(max_segment_size);
+        let num_segments_value = ColumnarValue::Scalar(num_segments);
+        let seed_value = ColumnarValue::Scalar(seed);
+
+        // Call the spark_st_random_linestring function with x1, y1, x2, and y2 arguments
+        let result = spark_st_random_linestring(&[x_value, y_value, max_segment_size_value, num_segments_value, seed_value], &DataType::Null).unwrap();
+
+        // Assert the result is as expected
+        if let ColumnarValue::Array(array) = result {
+            let result_array = array.as_any().downcast_ref::<StructArray>().unwrap();
+            assert_eq!(result_array.column(0).as_any().downcast_ref::<StringArray>().unwrap().value(0), "linestring"); // "type"
+        } else {
+            panic!("Expected geometry to be linestring");
+        }
     }
 }
