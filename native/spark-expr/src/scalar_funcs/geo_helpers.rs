@@ -16,11 +16,12 @@
 // under the License.
 
 use std::sync::Arc;
-use arrow_array::{Array};
+use arrow::datatypes::Float64Type;
+use arrow_array::{Array, PrimitiveArray};
 use arrow_array::{Float64Array, ListArray, StructArray};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::{DataFusionError, ScalarValue};
-use geo::Point;
+use geo::{Coord, Point};
 use geo_types::Geometry;
 use crate::scalar_funcs::geometry_helpers::{
     GEOMETRY_TYPE_POINT,
@@ -80,7 +81,7 @@ pub fn  arrow_to_geo(geom: &ColumnarValue) -> Result<Vec<geo_types::Geometry>, D
                 .downcast_ref::<Float64Array>()
                 .unwrap();
 
-            let mut geometries = Vec::new();
+            let mut geometries = Vec::with_capacity(x_array.len());
             for i in 0..x_array.len() {
                 let x = x_array.value(i);
                 let y = y_array.value(i);
@@ -97,7 +98,7 @@ pub fn  arrow_to_geo(geom: &ColumnarValue) -> Result<Vec<geo_types::Geometry>, D
                 .downcast_ref::<ListArray>()
                 .unwrap();
 
-            let mut geometries = Vec::new();
+            let mut geometries = Vec::with_capacity(multipoints_array.len());
 
             for i in 0..multipoints_array.len() {
                 let array_ref = multipoints_array.value(i);
@@ -138,7 +139,7 @@ pub fn  arrow_to_geo(geom: &ColumnarValue) -> Result<Vec<geo_types::Geometry>, D
                 .downcast_ref::<ListArray>()
                 .unwrap();
 
-            let mut geometries = Vec::new();
+            let mut geometries = Vec::with_capacity(linestring_array.len());
 
             for i in 0..linestring_array.len() {
                 let array_ref = linestring_array.value(i);
@@ -157,14 +158,7 @@ pub fn  arrow_to_geo(geom: &ColumnarValue) -> Result<Vec<geo_types::Geometry>, D
                     .downcast_ref::<Float64Array>()
                     .unwrap();
 
-                let mut coords = Vec::new();
-                for j in 0..x_array.len() {
-                    let x = x_array.value(j);
-                    let y = y_array.value(j);
-                    coords.push((x, y));
-                }
-
-                let coords: Vec<[f64; 2]> = coords.iter().map(|&(x, y)| [x, y]).collect();
+                let coords = arrow_to_coords(x_array, y_array);
                 let linestring_geom = geo_types::LineString::from(coords);
                 geometries.push(geo_types::Geometry::LineString(linestring_geom));
             }
@@ -179,14 +173,17 @@ pub fn  arrow_to_geo(geom: &ColumnarValue) -> Result<Vec<geo_types::Geometry>, D
                 .downcast_ref::<ListArray>()
                 .unwrap();
 
-            let mut geometries = Vec::new();
+            let mut geometries = Vec::with_capacity(polygon_array.len());
 
             for i in 0..polygon_array.len() {
                 let array_ref = polygon_array.value(i);
                 let linestring_array = array_ref.as_any().downcast_ref::<ListArray>().unwrap();
+                let num_rings = linestring_array.len();
+                let num_interior_rings = std::cmp::max(num_rings - 1, 0);
 
-                let mut coords = Vec::new();
-                for j in 0..linestring_array.len() {
+                let mut exterior_coords: Vec<Coord> = Vec::new();
+                let mut interior_rings: Vec<geo_types::LineString> = Vec::with_capacity(num_interior_rings);
+                for j in 0..num_rings {
                     let array_ref = linestring_array.value(j);
                     let point_array = array_ref.as_any().downcast_ref::<StructArray>().unwrap();
                     let x_array = point_array
@@ -203,21 +200,14 @@ pub fn  arrow_to_geo(geom: &ColumnarValue) -> Result<Vec<geo_types::Geometry>, D
                         .downcast_ref::<Float64Array>()
                         .unwrap();
 
-                    let mut line_coords = Vec::new();
-                    for k in 0..x_array.len() {
-                        let x = x_array.value(k);
-                        let y = y_array.value(k);
-                        line_coords.push((x, y));
+                    if j == 0 {
+                        exterior_coords = arrow_to_coords(x_array, y_array);
+                    } else {
+                        interior_rings.push(geo_types::LineString::from(arrow_to_coords(x_array, y_array)));
                     }
-
-                    let line_coords: Vec<[f64; 2]> = line_coords.iter().map(|&(x, y)| [x, y]).collect();
-                    coords.push(line_coords);
                 }
 
-                let exterior_ring = coords.remove(0);
-                let interior_rings = coords;
-
-                let polygon_geom = geo_types::Polygon::new(exterior_ring.into(), interior_rings.into_iter().map(Into::into).collect());
+                let polygon_geom = geo_types::Polygon::new(geo_types::LineString::from(exterior_coords), interior_rings);
                 geometries.push(geo_types::Geometry::Polygon(polygon_geom));
             }
 
@@ -225,6 +215,14 @@ pub fn  arrow_to_geo(geom: &ColumnarValue) -> Result<Vec<geo_types::Geometry>, D
         }
         _ => Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
     }
+}
+
+fn arrow_to_coords(x: &PrimitiveArray<Float64Type>, y: &PrimitiveArray<Float64Type>) -> Vec<Coord> {
+    let mut coords = Vec::with_capacity(x.len());
+    for i in 0..x.len() {
+        coords.push(Coord::from((x.value(i), y.value(i))));
+    }
+    coords
 }
 
 pub fn arrow_to_geo_scalar(geom: &ColumnarValue) -> Result<geo_types::Geometry, DataFusionError> {
@@ -425,7 +423,7 @@ pub fn geo_to_arrow(geometries: &[geo::Geometry]) -> Result<ColumnarValue, DataF
                     x_coords.push(point.x());
                     y_coords.push(point.y());
                 }
-                append_multipoint(&mut geometry_builder, x_coords, y_coords);
+                append_multipoint(&mut geometry_builder, &x_coords, &y_coords);
             }
             geo::Geometry::LineString(line_string) => {
                 let mut x_coords = Vec::with_capacity(line_string.0.len());
@@ -434,7 +432,7 @@ pub fn geo_to_arrow(geometries: &[geo::Geometry]) -> Result<ColumnarValue, DataF
                     x_coords.push(coord.x);
                     y_coords.push(coord.y);
                 }
-                append_linestring(&mut geometry_builder, x_coords, y_coords);
+                append_linestring(&mut geometry_builder, &x_coords, &y_coords);
             }
             geo::Geometry::MultiLineString(multi_line_string) => {
                 for line_string in &multi_line_string.0 {
@@ -444,7 +442,7 @@ pub fn geo_to_arrow(geometries: &[geo::Geometry]) -> Result<ColumnarValue, DataF
                         x_coords.push(coord.x);
                         y_coords.push(coord.y);
                     }
-                    append_multilinestring(&mut geometry_builder, vec![(x_coords, y_coords)]);
+                    append_multilinestring(&mut geometry_builder, &[(x_coords, y_coords)]);
                 }
             }
             geo::Geometry::Polygon(polygon) => {
@@ -455,7 +453,7 @@ pub fn geo_to_arrow(geometries: &[geo::Geometry]) -> Result<ColumnarValue, DataF
                     x_coords.push(coord.x);
                     y_coords.push(coord.y);
                 }
-                append_polygon(&mut geometry_builder, vec![(x_coords, y_coords)]);
+                append_polygon(&mut geometry_builder, &[(x_coords, y_coords)]);
             }
             _ => return Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
         }
@@ -493,7 +491,7 @@ pub fn geo_to_arrow_scalar(geometry: &Geometry) -> Result<ColumnarValue, DataFus
                 x_coords.push(point.x());
                 y_coords.push(point.y());
             }
-            append_multipoint(&mut geometry_builder, x_coords, y_coords);
+            append_multipoint(&mut geometry_builder, &x_coords, &y_coords);
         }
         geo::Geometry::LineString(line_string) => {
             let mut x_coords = Vec::with_capacity(line_string.0.len());
@@ -502,7 +500,7 @@ pub fn geo_to_arrow_scalar(geometry: &Geometry) -> Result<ColumnarValue, DataFus
                 x_coords.push(coord.x);
                 y_coords.push(coord.y);
             }
-            append_linestring(&mut geometry_builder, x_coords, y_coords);
+            append_linestring(&mut geometry_builder, &x_coords, &y_coords);
         }
         geo::Geometry::MultiLineString(multi_line_string) => {
             for line_string in &multi_line_string.0 {
@@ -512,7 +510,7 @@ pub fn geo_to_arrow_scalar(geometry: &Geometry) -> Result<ColumnarValue, DataFus
                     x_coords.push(coord.x);
                     y_coords.push(coord.y);
                 }
-                append_multilinestring(&mut geometry_builder, vec![(x_coords, y_coords)]);
+                append_multilinestring(&mut geometry_builder, &[(x_coords, y_coords)]);
             }
         }
         geo::Geometry::Polygon(polygon) => {
@@ -523,7 +521,7 @@ pub fn geo_to_arrow_scalar(geometry: &Geometry) -> Result<ColumnarValue, DataFus
                 x_coords.push(coord.x);
                 y_coords.push(coord.y);
             }
-            append_polygon(&mut geometry_builder, vec![(x_coords, y_coords)]);
+            append_polygon(&mut geometry_builder, &[(x_coords, y_coords)]);
         }
         _ => return Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
     }

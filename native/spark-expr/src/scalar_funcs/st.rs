@@ -16,10 +16,10 @@
 // under the License.
 
 use std::sync::Arc;
-use arrow_array::builder::{BooleanBuilder};
+use arrow_array::builder::BooleanBuilder;
 use arrow_array::{Array, BinaryArray, DictionaryArray, Float64Array, Int32Array, Int64Array, ListArray, StringArray, StructArray};
 use arrow_array::types::Int32Type;
-use arrow_schema::{DataType};
+use arrow_schema::DataType;
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::{DataFusionError, ScalarValue};
 use wkt::TryFromWkt;
@@ -32,7 +32,7 @@ use crate::scalar_funcs::geometry_helpers::{
     create_geometry_builder_multilinestring,
     append_point,
     append_linestring,
-    append_polygon,
+    append_polygon_2,
     append_multipoint,
     append_multilinestring,
     GEOMETRY_TYPE_POINT,
@@ -151,7 +151,7 @@ pub fn spark_st_points(
             for i in 0..x_array.len() {
                 let x = x_array.value(i);
                 let y = y_array.value(i);
-                append_multipoint(&mut geometry_builder, vec![x], vec![y]);
+                append_multipoint(&mut geometry_builder, &[x], &[y]);
             }
         }
         GEOMETRY_TYPE_LINESTRING => {
@@ -187,7 +187,7 @@ pub fn spark_st_points(
                     x_coords.push(x);
                     y_coords.push(y);
                 }
-                append_multipoint(&mut geometry_builder, x_coords, y_coords);
+                append_multipoint(&mut geometry_builder, &x_coords, &y_coords);
             }
         }
         GEOMETRY_TYPE_POLYGON => {
@@ -254,7 +254,7 @@ pub fn spark_st_linestring(
         let y1 = y1_values.value(i);
         let x2 = x2_values.value(i);
         let y2 = y2_values.value(i);
-        append_linestring(&mut geometry_builder, vec![x1, x2], vec![y1, y2]);
+        append_linestring(&mut geometry_builder, &[x1, x2], &[y1, y2]);
     }
 
     // Finish the geometry builder and convert to an Arrow array
@@ -315,7 +315,8 @@ pub fn spark_st_multilinestring(
         let y1 = y1_values.value(i);
         let x2 = x2_values.value(i);
         let y2 = y2_values.value(i);
-        append_multilinestring(&mut geometry_builder, vec![(vec![x1, x2], vec![y1, y2])]);
+        let linestrings = vec![(vec![x1, x2], vec![y1, y2])];
+        append_multilinestring(&mut geometry_builder, &linestrings);
     }
 
     // Finish the geometry builder and convert to an Arrow array
@@ -376,7 +377,7 @@ pub fn spark_st_polygon(
         let y1 = y1_values.value(i);
         let x2 = x2_values.value(i);
         let y2 = y2_values.value(i);
-        append_polygon(&mut geometry_builder, vec![(vec![x1, x1, x2, x2, x1], vec![y1, y2, y2, y1, y1])]);
+        append_polygon_2(&mut geometry_builder, &[(&[x1, x2], &[y1, y2])]);
     }
 
     // Finish the geometry builder and convert to an Arrow array
@@ -442,6 +443,8 @@ pub fn spark_st_random_polygon(
 
     // Initialize vectors to hold angles, x_coords, and y_coords for reuse
     let mut angles = Vec::new();
+    let mut x_coords = Vec::new();
+    let mut y_coords = Vec::new();
 
     // Generate random polygon for each set of input values
     for i in 0..center_x_values.len() {
@@ -463,8 +466,10 @@ pub fn spark_st_random_polygon(
         angles.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
         // Generate coordinates
-        let mut x_coords = Vec::with_capacity((num_segments + 1) as usize); 
-        let mut y_coords = Vec::with_capacity((num_segments + 1) as usize);
+        x_coords.clear();
+        y_coords.clear();
+        x_coords.reserve((num_segments + 1) as usize);
+        y_coords.reserve((num_segments + 1) as usize);
 
         for k in 0..num_segments {
             let angle = angles[k as usize];
@@ -480,7 +485,7 @@ pub fn spark_st_random_polygon(
         y_coords.push(y_coords[0]);
 
         // Append the polygon to the builder
-        append_polygon(&mut geometry_builder, vec![(x_coords, y_coords)]);
+        append_polygon_2(&mut geometry_builder, &[(&x_coords, &y_coords)]);
     }
 
     // Finish the geometry builder and convert to an Arrow array
@@ -543,6 +548,8 @@ pub fn spark_st_random_linestring(
 
     // Create the geometry builder
     let mut geometry_builder = create_geometry_builder_linestring();
+    let mut x_coords = Vec::new();
+    let mut y_coords = Vec::new();
 
     // Generate random linestring for each set of input values
     for i in 0..start_x_values.len() {
@@ -556,8 +563,10 @@ pub fn spark_st_random_linestring(
         let mut random = XORShiftRandom::new(seed);
 
         // Generate coordinates
-        let mut x_coords = Vec::with_capacity((num_segments + 1) as usize);
-        let mut y_coords = Vec::with_capacity((num_segments + 1) as usize);
+        x_coords.clear();
+        y_coords.clear();
+        x_coords.reserve((num_segments + 1) as usize);
+        y_coords.reserve((num_segments + 1) as usize);
 
         // Add starting point
         x_coords.push(start_x);
@@ -577,7 +586,7 @@ pub fn spark_st_random_linestring(
         }
 
         // Append the linestring to the builder
-        append_linestring(&mut geometry_builder, x_coords, y_coords);
+        append_linestring(&mut geometry_builder, &x_coords, &y_coords);
     }
 
     // Finish the geometry builder and convert to an Arrow array
@@ -749,7 +758,7 @@ pub fn spark_st_envelope(
         let x2 = bbox.max().x;
         let y1 = bbox.min().y;
         let y2 = bbox.max().y;
-        append_polygon(&mut geometry_builder, vec![(vec![x1, x1, x2, x2, x1], vec![y1, y2, y2, y1, y1])]);
+        append_polygon_2(&mut geometry_builder, &[(&[x1, x1, x2, x2, x1], &[y1, y2, y2, y1, y1])]);
     }
 
     // Finish the geometry builder and convert to an Arrow array
@@ -1024,7 +1033,7 @@ mod tests {
 
         let x_coords = vec![1.0, 2.0, 5.0];
         let y_coords = vec![3.0, 4.0, 6.0];
-        append_linestring(&mut geometry_builder, x_coords, y_coords);
+        append_linestring(&mut geometry_builder, &x_coords, &y_coords);
 
         let geom_array = geometry_builder.finish();
 
@@ -1204,7 +1213,7 @@ mod tests {
         let mut geometry_builder = create_geometry_builder();
         let x_coords = vec![1.0, 2.0, 5.0];
         let y_coords = vec![3.0, 4.0, 6.0];
-        append_linestring(&mut geometry_builder, x_coords, y_coords);
+        append_linestring(&mut geometry_builder, &x_coords, &y_coords);
 
         let geom_array = geometry_builder.finish();
 
