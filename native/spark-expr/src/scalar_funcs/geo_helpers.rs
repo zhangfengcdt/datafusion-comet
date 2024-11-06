@@ -16,8 +16,7 @@
 // under the License.
 
 use std::sync::Arc;
-use arrow::datatypes::Float64Type;
-use arrow_array::{Array, PrimitiveArray};
+use arrow_array::Array;
 use arrow_array::{Float64Array, ListArray, StructArray};
 use datafusion::logical_expr::ColumnarValue;
 use datafusion_common::{DataFusionError, ScalarValue};
@@ -139,26 +138,38 @@ pub fn  arrow_to_geo(geom: &ColumnarValue) -> Result<Vec<geo_types::Geometry>, D
                 .downcast_ref::<ListArray>()
                 .unwrap();
 
+            // Get points data and offsets
+            let points_array = linestring_array.values().as_any().downcast_ref::<StructArray>().unwrap();
+            let points_offsets = linestring_array.offsets();
+
+            // Get coordinate arrays once
+            let x_array = points_array
+                .column_by_name("x")
+                .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap();
+
+            let y_array = points_array
+                .column_by_name("y")
+                .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap();
+
             let mut geometries = Vec::with_capacity(linestring_array.len());
 
             for i in 0..linestring_array.len() {
-                let array_ref = linestring_array.value(i);
-                let point_array = array_ref.as_any().downcast_ref::<StructArray>().unwrap();
-                let x_array = point_array
-                    .column_by_name("x")
-                    .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
-                    .as_any()
-                    .downcast_ref::<Float64Array>()
-                    .unwrap();
-
-                let y_array = point_array
-                    .column_by_name("y")
-                    .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
-                    .as_any()
-                    .downcast_ref::<Float64Array>()
-                    .unwrap();
-
-                let coords = arrow_to_coords(x_array, y_array);
+                let points_start = points_offsets[i] as usize;
+                let points_end = points_offsets[i + 1] as usize;
+                
+                // Create slices for this linestring's coordinates
+                let mut coords = Vec::with_capacity(points_end - points_start);
+                for j in points_start..points_end {
+                    let x = x_array.value(j);
+                    let y = y_array.value(j);
+                    coords.push(Coord::from((x, y)));
+                }
                 let linestring_geom = geo_types::LineString::from(coords);
                 geometries.push(geo_types::Geometry::LineString(linestring_geom));
             }
@@ -173,37 +184,58 @@ pub fn  arrow_to_geo(geom: &ColumnarValue) -> Result<Vec<geo_types::Geometry>, D
                 .downcast_ref::<ListArray>()
                 .unwrap();
 
+            // Get all rings data
+            let rings_array = polygon_array.values();
+            let rings_offsets = polygon_array.offsets();
+
+            // Get all points data
+            let points_array = rings_array.as_any().downcast_ref::<ListArray>().unwrap();
+            let points_offsets = points_array.offsets();
+
+            // Get coordinate arrays
+            let point_struct_array = points_array.values().as_any().downcast_ref::<StructArray>().unwrap();
+            let x_array = point_struct_array
+                .column_by_name("x")
+                .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap();
+            let y_array = point_struct_array
+                .column_by_name("y")
+                .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap();
+
             let mut geometries = Vec::with_capacity(polygon_array.len());
 
+            // Iterate over polygons
             for i in 0..polygon_array.len() {
-                let array_ref = polygon_array.value(i);
-                let linestring_array = array_ref.as_any().downcast_ref::<ListArray>().unwrap();
-                let num_rings = linestring_array.len();
+                let rings_start = rings_offsets[i] as usize;
+                let rings_end = rings_offsets[i + 1] as usize;
+                let num_rings = rings_end - rings_start;
                 let num_interior_rings = std::cmp::max(num_rings - 1, 0);
 
                 let mut exterior_coords: Vec<Coord> = Vec::new();
                 let mut interior_rings: Vec<geo_types::LineString> = Vec::with_capacity(num_interior_rings);
-                for j in 0..num_rings {
-                    let array_ref = linestring_array.value(j);
-                    let point_array = array_ref.as_any().downcast_ref::<StructArray>().unwrap();
-                    let x_array = point_array
-                        .column_by_name("x")
-                        .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
-                        .as_any()
-                        .downcast_ref::<Float64Array>()
-                        .unwrap();
 
-                    let y_array = point_array
-                        .column_by_name("y")
-                        .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
-                        .as_any()
-                        .downcast_ref::<Float64Array>()
-                        .unwrap();
+                // Iterate over rings
+                for j in 0..num_rings {
+                    let ring_idx = rings_start + j;
+                    let points_start = points_offsets[ring_idx] as usize;
+                    let points_end = points_offsets[ring_idx + 1] as usize;
+                    
+                    let mut ring_coords = Vec::with_capacity(points_end - points_start);
+                    
+                    // Collect coordinates for this ring
+                    for k in points_start..points_end {
+                        ring_coords.push(Coord::from((x_array.value(k), y_array.value(k))));
+                    }
 
                     if j == 0 {
-                        exterior_coords = arrow_to_coords(x_array, y_array);
+                        exterior_coords = ring_coords;
                     } else {
-                        interior_rings.push(geo_types::LineString::from(arrow_to_coords(x_array, y_array)));
+                        interior_rings.push(geo_types::LineString::from(ring_coords));
                     }
                 }
 
@@ -215,14 +247,6 @@ pub fn  arrow_to_geo(geom: &ColumnarValue) -> Result<Vec<geo_types::Geometry>, D
         }
         _ => Err(DataFusionError::Internal("Unsupported geometry type".to_string())),
     }
-}
-
-fn arrow_to_coords(x: &PrimitiveArray<Float64Type>, y: &PrimitiveArray<Float64Type>) -> Vec<Coord> {
-    let mut coords = Vec::with_capacity(x.len());
-    for i in 0..x.len() {
-        coords.push(Coord::from((x.value(i), y.value(i))));
-    }
-    coords
 }
 
 pub fn arrow_to_geo_scalar(geom: &ColumnarValue) -> Result<geo_types::Geometry, DataFusionError> {

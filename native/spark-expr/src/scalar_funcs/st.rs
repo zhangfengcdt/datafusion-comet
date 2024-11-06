@@ -1285,6 +1285,7 @@ mod tests {
     }
 
     use arrow_array::builder::BinaryBuilder;
+    use geo::{Centroid, CoordsIter};
 
     #[test]
     fn test_spark_st_geomfromwkb() {
@@ -1373,8 +1374,10 @@ mod tests {
     #[test]
     fn test_spark_st_random_polygon() {
         // Create sample x1, y1, x2, and y2 coordinates as Float64Array
-        let x_coords = Float64Array::from(vec![1.0, 2.0, 3.0]);
-        let y_coords = Float64Array::from(vec![4.0, 5.0, 6.0]);
+        let xs = vec![10.0, 20.0, 30.0];
+        let ys = vec![40.0, 50.0, 60.0];
+        let x_coords = Float64Array::from(xs.clone());
+        let y_coords = Float64Array::from(ys.clone());
         let max_size = ScalarValue::Float64(Some(0.1));
         let num_segments = ScalarValue::Int32(Some(3));
         let seed = ScalarValue::Int64(Some(123));
@@ -1390,9 +1393,18 @@ mod tests {
         let result = spark_st_random_polygon(&[x_value, y_value, max_size_value, num_segments_value, seed_value], &DataType::Null).unwrap();
 
         // Assert the result is as expected
-        if let ColumnarValue::Array(array) = result {
+        if let ColumnarValue::Array(array) = &result {
             let result_array = array.as_any().downcast_ref::<StructArray>().unwrap();
             assert_eq!(result_array.column(0).as_any().downcast_ref::<StringArray>().unwrap().value(0), "polygon"); // "type"
+            let polygons = arrow_to_geo(&result).unwrap();
+            assert_eq!(polygons.len(), 3);
+            for k in 0..3 {
+                let polygon = &polygons[k];
+                let centroid = polygon.centroid().unwrap();
+                assert!((centroid.x() - xs[k]).abs() < 0.5);
+                assert!((centroid.y() - ys[k]).abs() < 0.5);
+            }
+
         } else {
             panic!("Expected geometry to be polygon");
         }        
@@ -1401,10 +1413,12 @@ mod tests {
     #[test]
     fn test_spark_st_random_linestring() {
         // Create sample x1, y1, x2, and y2 coordinates as Float64Array
-        let x_coords = Float64Array::from(vec![1.0, 2.0, 3.0]);
-        let y_coords = Float64Array::from(vec![4.0, 5.0, 6.0]);
+        let xs = vec![10.0, 20.0, 30.0];
+        let ys = vec![40.0, 50.0, 60.0];
+        let x_coords = Float64Array::from(xs.clone());
+        let y_coords = Float64Array::from(ys.clone());
         let max_segment_size = ScalarValue::Float64(Some(0.1));
-        let num_segments = ScalarValue::Int32(Some(3));
+        let num_segments = ScalarValue::Int32(Some(5));
         let seed = ScalarValue::Int64(Some(123));
 
         // Convert to ColumnarValue
@@ -1418,9 +1432,19 @@ mod tests {
         let result = spark_st_random_linestring(&[x_value, y_value, max_segment_size_value, num_segments_value, seed_value], &DataType::Null).unwrap();
 
         // Assert the result is as expected
-        if let ColumnarValue::Array(array) = result {
+        if let ColumnarValue::Array(array) = &result {
             let result_array = array.as_any().downcast_ref::<StructArray>().unwrap();
             assert_eq!(result_array.column(0).as_any().downcast_ref::<StringArray>().unwrap().value(0), "linestring"); // "type"
+            let linestrings = arrow_to_geo(&result).unwrap();
+            assert_eq!(linestrings.len(), 3);
+            for k in 0..3 {
+                let linestring = &linestrings[k];
+                assert_eq!(6, linestring.coords_count());
+                for coord in linestring.coords_iter() {
+                    assert!((coord.x - xs[k]).abs() < 0.5);
+                    assert!((coord.y - ys[k]).abs() < 0.5);
+                }
+            }
         } else {
             panic!("Expected geometry to be linestring");
         }
