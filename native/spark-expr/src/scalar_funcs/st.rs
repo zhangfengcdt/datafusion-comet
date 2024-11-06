@@ -377,7 +377,7 @@ pub fn spark_st_polygon(
         let y1 = y1_values.value(i);
         let x2 = x2_values.value(i);
         let y2 = y2_values.value(i);
-        append_polygon_2(&mut geometry_builder, &[(&[x1, x2], &[y1, y2])]);
+        append_polygon_2(&mut geometry_builder, &[(&[x1, x1, x2, x2, x1], &[y1, y2, y2, y1, y1])]);
     }
 
     // Finish the geometry builder and convert to an Arrow array
