@@ -27,6 +27,7 @@ use datafusion_comet_spark_expr::scalar_funcs::{
     spark_st_intersects, spark_st_intersects_use_geo, spark_st_intersects_wkb,
     spark_st_geomfromwkt, spark_st_geomfromwkb,
     spark_st_contains, spark_st_within,
+    spark_st_random_polygon, spark_st_random_linestring
 };
 use datafusion_common::{DataFusionError, Result as DataFusionResult};
 use datafusion_expr::registry::FunctionRegistry;
@@ -82,6 +83,12 @@ pub fn create_comet_physical_fun(
         }
         "st_envelope" => {
             make_comet_scalar_udf!("st_envelope", spark_st_envelope, data_type)
+        }
+        "st_randompolygon" => {
+            make_comet_scalar_udf!("st_randompolygon", spark_st_random_polygon, data_type)
+        }
+        "st_randomlinestring" => {
+            make_comet_scalar_udf!("st_randomlinestring", spark_st_random_linestring, data_type)
         }
         "st_intersects" => {
             make_comet_scalar_udf!("st_intersects", spark_st_intersects, data_type)
