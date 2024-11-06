@@ -256,11 +256,15 @@ class CometUDF {
     DataTypes.createStructType(GEOMETRY))
 
   val st_randompolygon: UserDefinedFunction = udf(
-    new UDF5[Row, Row, Row, Row, Row, Row] { override def call(x: Row, y: Row, sz: Row, nSeg: Row, seed: Row): Row = Row.empty },
+    new UDF5[Row, Row, Row, Row, Row, Row] {
+      override def call(x: Row, y: Row, sz: Row, nSeg: Row, seed: Row): Row = Row.empty
+    },
     DataTypes.createStructType(GEOMETRY_POLYGON))
 
   val st_randomlinestring: UserDefinedFunction = udf(
-    new UDF5[Row, Row, Row, Row, Row, Row] { override def call(x: Row, y: Row, sz: Row, nSeg: Row, seed: Row): Row = Row.empty },
+    new UDF5[Row, Row, Row, Row, Row, Row] {
+      override def call(x: Row, y: Row, sz: Row, nSeg: Row, seed: Row): Row = Row.empty
+    },
     DataTypes.createStructType(GEOMETRY_POLYGON))
 
   /**
