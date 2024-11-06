@@ -21,6 +21,7 @@ package org.apache.spark.sql.comet.udf
 
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.api.java.{UDF1, UDF2, UDF4}
+import org.apache.spark.sql.api.java.UDF5
 import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.sql.functions.udf
 import org.apache.spark.sql.types.{BooleanType, DataTypes, StructField}
@@ -254,6 +255,14 @@ class CometUDF {
     new UDF1[Row, Row] { override def call(dummy: Row): Row = Row.empty },
     DataTypes.createStructType(GEOMETRY))
 
+  val st_randompolygon: UserDefinedFunction = udf(
+    new UDF5[Row, Row, Row, Row, Row, Row] { override def call(x: Row, y: Row, sz: Row, nSeg: Row, seed: Row): Row = Row.empty },
+    DataTypes.createStructType(GEOMETRY_POLYGON))
+
+  val st_randomlinestring: UserDefinedFunction = udf(
+    new UDF5[Row, Row, Row, Row, Row, Row] { override def call(x: Row, y: Row, sz: Row, nSeg: Row, seed: Row): Row = Row.empty },
+    DataTypes.createStructType(GEOMETRY_POLYGON))
+
   /**
    * Registers all UDFs defined in this class with the given SparkSession.
    *
@@ -267,6 +276,8 @@ class CometUDF {
     spark.udf.register("st_multilinestring", st_multilinestring)
     spark.udf.register("st_polygon", st_polygon)
     spark.udf.register("st_multipolygon", st_multipolygon)
+    spark.udf.register("st_randompolygon", st_randompolygon)
+    spark.udf.register("st_randomlinestring", st_randomlinestring)
     spark.udf.register("st_intersects", st_intersects)
     spark.udf.register("st_intersects2", st_intersects2)
     spark.udf.register("st_intersects3", st_intersects3)

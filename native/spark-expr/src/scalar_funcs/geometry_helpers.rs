@@ -448,13 +448,16 @@ fn append_nulls(geometry_builder: &mut StructBuilder, null_indices: &[usize]) {
 }
 
 // Helper function to append coordinate values
-fn append_coordinates(list_builder: &mut ListBuilder<StructBuilder>, x_coords: Vec<f64>, y_coords: Vec<f64>) {
-    for (x, y) in x_coords.iter().zip(y_coords.iter()) {
-        list_builder.values().field_builder::<Float64Builder>(0).unwrap().append_value(*x);
-        list_builder.values().field_builder::<Float64Builder>(1).unwrap().append_value(*y);
-        list_builder.values().field_builder::<Float64Builder>(2).unwrap().append_null();
-        list_builder.values().field_builder::<Float64Builder>(3).unwrap().append_null();
-        list_builder.values().append(true);
+fn append_coordinates(list_builder: &mut ListBuilder<StructBuilder>, x_coords: &[f64], y_coords: &[f64]) {
+    let num_coords = x_coords.len();
+
+    list_builder.values().field_builder::<Float64Builder>(0).unwrap().append_slice(x_coords);
+    list_builder.values().field_builder::<Float64Builder>(1).unwrap().append_slice(y_coords);
+    list_builder.values().field_builder::<Float64Builder>(2).unwrap().append_nulls(num_coords);
+    list_builder.values().field_builder::<Float64Builder>(3).unwrap().append_nulls(num_coords);
+    let list_value_builder = list_builder.values();
+    for _ in 0..num_coords {
+        list_value_builder.append(true);
     }
     list_builder.append(true);
 }
@@ -472,59 +475,67 @@ pub fn append_point(geometry_builder: &mut StructBuilder, x: f64, y: f64) {
 }
 
 /// Appends a multipoint geometry to the `StructBuilder`.
-pub fn append_multipoint(geometry_builder: &mut StructBuilder, x_coords: Vec<f64>, y_coords: Vec<f64>) {
+pub fn append_multipoint(geometry_builder: &mut StructBuilder, x_coords: &[f64], y_coords: &[f64]) {
     geometry_builder.field_builder::<StringBuilder>(0).unwrap().append_value(GEOMETRY_TYPE_MULTIPOINT);
-    // append_nulls(geometry_builder, &[1, 3, 4, 5, 6]);
     let list_builder = geometry_builder.field_builder::<ListBuilder<StructBuilder>>(1).unwrap();
     append_coordinates(list_builder, x_coords, y_coords);
     geometry_builder.append(true);
 }
 
 /// Appends a linestring geometry to the `StructBuilder`.
-pub fn append_linestring(geometry_builder: &mut StructBuilder, x_coords: Vec<f64>, y_coords: Vec<f64>) {
+pub fn append_linestring(geometry_builder: &mut StructBuilder, x_coords: &[f64], y_coords: &[f64]) {
     geometry_builder.field_builder::<StringBuilder>(0).unwrap().append_value(GEOMETRY_TYPE_LINESTRING);
-    // append_nulls(geometry_builder, &[1, 2, 4, 5, 6]);
     let list_builder = geometry_builder.field_builder::<ListBuilder<StructBuilder>>(1).unwrap();
     append_coordinates(list_builder, x_coords, y_coords);
     geometry_builder.append(true);
 }
 
 /// Appends a multilinestring geometry to the `StructBuilder`.
-pub fn append_multilinestring(geometry_builder: &mut StructBuilder, linestrings: Vec<(Vec<f64>, Vec<f64>)>) {
+pub fn append_multilinestring(geometry_builder: &mut StructBuilder, linestrings: &[(Vec<f64>, Vec<f64>)]) {
     geometry_builder.field_builder::<StringBuilder>(0).unwrap().append_value(GEOMETRY_TYPE_MULTILINESTRING);
-    // append_nulls(geometry_builder, &[1, 2, 3, 5, 6]);
     let list_builder = geometry_builder.field_builder::<ListBuilder<ListBuilder<StructBuilder>>>(1).unwrap();
-    for (x_coords, y_coords) in linestrings.iter() {
+    for (x_coords, y_coords) in linestrings {
         let linestring_builder = list_builder.values();
-        append_coordinates(linestring_builder, x_coords.clone(), y_coords.clone());
+        append_coordinates(linestring_builder, x_coords, y_coords);
     }
     list_builder.append(true);
     geometry_builder.append(true);
 }
 
 /// Appends a polygon geometry to the `StructBuilder`.
-pub fn append_polygon(geometry_builder: &mut StructBuilder, rings: Vec<(Vec<f64>, Vec<f64>)>) {
+pub fn append_polygon(geometry_builder: &mut StructBuilder, rings: &[(Vec<f64>, Vec<f64>)]) {
     geometry_builder.field_builder::<StringBuilder>(0).unwrap().append_value(GEOMETRY_TYPE_POLYGON);
-    // append_nulls(geometry_builder, &[1, 2, 3, 4, 6]);
     let list_builder = geometry_builder.field_builder::<ListBuilder<ListBuilder<StructBuilder>>>(1).unwrap();
-    for (x_coords, y_coords) in rings.iter() {
+    for (x_coords, y_coords) in rings {
         let ring_builder = list_builder.values();
-        append_coordinates(ring_builder, x_coords.clone(), y_coords.clone());
+        append_coordinates(ring_builder, x_coords, y_coords);
     }
     list_builder.append(true);
     geometry_builder.append(true);
 }
 
+pub fn append_polygon_2(geometry_builder: &mut StructBuilder, rings: &[(&[f64], &[f64])]) {
+    geometry_builder.field_builder::<StringBuilder>(0).unwrap().append_value(GEOMETRY_TYPE_POLYGON);
+    let list_builder = geometry_builder.field_builder::<ListBuilder<ListBuilder<StructBuilder>>>(1).unwrap();
+    for (x_coords, y_coords) in rings {
+        let ring_builder = list_builder.values();
+        append_coordinates(ring_builder, x_coords, y_coords);
+    }
+    list_builder.append(true);
+    geometry_builder.append(true);
+}
+
+
 /// Appends a multipolygon geometry to the `StructBuilder`.
-pub fn append_multipolygon(geometry_builder: &mut StructBuilder, polygons: Vec<Vec<(Vec<f64>, Vec<f64>)>>) {
+pub fn append_multipolygon(geometry_builder: &mut StructBuilder, polygons: &[Vec<(Vec<f64>, Vec<f64>)>]) {
     geometry_builder.field_builder::<StringBuilder>(0).unwrap().append_value(GEOMETRY_TYPE_MULTIPOLYGON);
     append_nulls(geometry_builder, &[1, 2, 3, 4, 5]);
     let list_builder = geometry_builder.field_builder::<ListBuilder<ListBuilder<ListBuilder<StructBuilder>>>>(6).unwrap();
-    for rings in polygons.iter() {
+    for rings in polygons {
         let polygon_builder = list_builder.values();
-        for (x_coords, y_coords) in rings.iter() {
+        for (x_coords, y_coords) in rings {
             let ring_builder = polygon_builder.values();
-            append_coordinates(ring_builder, x_coords.clone(), y_coords.clone());
+            append_coordinates(ring_builder, x_coords, y_coords);
         }
         polygon_builder.append(true);
     }
@@ -542,7 +553,7 @@ pub fn create_point(x: f64, y: f64) -> Result<ColumnarValue, DataFusionError> {
 }
 
 /// Creates a linestring geometry and returns it as a `ColumnarValue`.
-pub fn create_linestring(x_coords: Vec<f64>, y_coords: Vec<f64>) -> Result<ColumnarValue, DataFusionError> {
+pub fn create_linestring(x_coords: &[f64], y_coords: &[f64]) -> Result<ColumnarValue, DataFusionError> {
     let mut geometry_builder = create_geometry_builder_linestring();
     append_linestring(&mut geometry_builder, x_coords, y_coords);
     let geometry_array = geometry_builder.finish();
@@ -551,7 +562,7 @@ pub fn create_linestring(x_coords: Vec<f64>, y_coords: Vec<f64>) -> Result<Colum
 }
 
 /// Creates a multipoint geometry and returns it as a `ColumnarValue`.
-pub fn create_multipoint(x_coords: Vec<f64>, y_coords: Vec<f64>) -> Result<ColumnarValue, DataFusionError> {
+pub fn create_multipoint(x_coords: &[f64], y_coords: &[f64]) -> Result<ColumnarValue, DataFusionError> {
     let mut geometry_builder = create_geometry_builder_points();
     append_multipoint(&mut geometry_builder, x_coords, y_coords);
     let geometry_array = geometry_builder.finish();
@@ -560,7 +571,7 @@ pub fn create_multipoint(x_coords: Vec<f64>, y_coords: Vec<f64>) -> Result<Colum
 }
 
 /// Creates a multilinestring geometry and returns it as a `ColumnarValue`.
-pub fn create_multilinestring(linestrings: Vec<(Vec<f64>, Vec<f64>)>) -> Result<ColumnarValue, DataFusionError> {
+pub fn create_multilinestring(linestrings: &[(Vec<f64>, Vec<f64>)]) -> Result<ColumnarValue, DataFusionError> {
     let mut geometry_builder = create_geometry_builder_linestring();
     append_multilinestring(&mut geometry_builder, linestrings);
     let geometry_array = geometry_builder.finish();
@@ -569,7 +580,7 @@ pub fn create_multilinestring(linestrings: Vec<(Vec<f64>, Vec<f64>)>) -> Result<
 }
 
 /// Creates a polygon geometry and returns it as a `ColumnarValue`.
-pub fn create_polygon(rings: Vec<(Vec<f64>, Vec<f64>)>) -> Result<ColumnarValue, DataFusionError> {
+pub fn create_polygon(rings: &[(Vec<f64>, Vec<f64>)]) -> Result<ColumnarValue, DataFusionError> {
     let mut geometry_builder = create_geometry_builder_polygon();
     append_polygon(&mut geometry_builder, rings);
     let geometry_array = geometry_builder.finish();
@@ -578,7 +589,7 @@ pub fn create_polygon(rings: Vec<(Vec<f64>, Vec<f64>)>) -> Result<ColumnarValue,
 }
 
 /// Creates a multipolygon geometry and returns it as a `ColumnarValue`.
-pub fn create_multipolygon(polygons: Vec<Vec<(Vec<f64>, Vec<f64>)>>) -> Result<ColumnarValue, DataFusionError> {
+pub fn create_multipolygon(polygons: &[Vec<(Vec<f64>, Vec<f64>)>]) -> Result<ColumnarValue, DataFusionError> {
     let mut geometry_builder = create_geometry_builder();
     append_multipolygon(&mut geometry_builder, polygons);
     let geometry_array = geometry_builder.finish();
@@ -769,7 +780,7 @@ mod tests {
     fn test_create_linestring() {
         let x_coords = vec![1.0, 2.0, 3.0];
         let y_coords = vec![4.0, 5.0, 6.0];
-        let result = create_linestring(x_coords.clone(), y_coords.clone()).unwrap();
+        let result = create_linestring(&x_coords, &y_coords).unwrap();
         let array = match result {
             ColumnarValue::Array(array) => array,
             _ => panic!("Expected ColumnarValue::Array"),
@@ -785,7 +796,7 @@ mod tests {
     fn test_create_multipoint() {
         let x_coords = vec![1.0, 2.0, 3.0];
         let y_coords = vec![4.0, 5.0, 6.0];
-        let result = create_multipoint(x_coords.clone(), y_coords.clone()).unwrap();
+        let result = create_multipoint(&x_coords, &y_coords).unwrap();
         let array = match result {
             ColumnarValue::Array(array) => array,
             _ => panic!("Expected ColumnarValue::Array"),
@@ -803,7 +814,7 @@ mod tests {
             (vec![1.0, 2.0], vec![3.0, 4.0]),
             (vec![5.0, 6.0], vec![7.0, 8.0]),
         ];
-        let result = create_multilinestring(linestrings.clone()).unwrap();
+        let result = create_multilinestring(&linestrings).unwrap();
         let array = match result {
             ColumnarValue::Array(array) => array,
             _ => panic!("Expected ColumnarValue::Array"),
@@ -818,7 +829,7 @@ mod tests {
             (vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]),
             (vec![7.0, 8.0, 9.0], vec![10.0, 11.0, 12.0]),
         ];
-        let result = create_polygon(rings.clone()).unwrap();
+        let result = create_polygon(&rings).unwrap();
         let array = match result {
             ColumnarValue::Array(array) => array,
             _ => panic!("Expected ColumnarValue::Array"),
@@ -839,7 +850,7 @@ mod tests {
                 (vec![13.0, 14.0], vec![15.0, 16.0]),
             ],
         ];
-        let result = create_multipolygon(polygons.clone()).unwrap();
+        let result = create_multipolygon(&polygons).unwrap();
         let array = match result {
             ColumnarValue::Array(array) => array,
             _ => panic!("Expected ColumnarValue::Array"),
@@ -854,7 +865,7 @@ mod tests {
             (vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]),
             (vec![7.0, 8.0, 9.0], vec![10.0, 11.0, 12.0]),
         ];
-        let result = &create_polygon(rings.clone())?;
+        let result = &create_polygon(&rings)?;
 
         // Downcast to StructArray to check the "type" field
         let struct_array = match result {
