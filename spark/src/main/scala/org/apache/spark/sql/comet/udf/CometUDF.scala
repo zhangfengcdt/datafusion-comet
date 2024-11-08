@@ -261,7 +261,7 @@ class CometUDF {
 
   val st_randomlinestring: UserDefinedFunction = udf(
     new UDF5[Row, Row, Row, Row, Row, Row] { override def call(x: Row, y: Row, sz: Row, nSeg: Row, seed: Row): Row = Row.empty },
-    DataTypes.createStructType(GEOMETRY_POLYGON))
+    DataTypes.createStructType(GEOMETRY_LINESTRING))
 
   /**
    * Registers all UDFs defined in this class with the given SparkSession.
