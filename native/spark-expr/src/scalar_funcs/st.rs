@@ -41,6 +41,7 @@ use crate::scalar_funcs::geometry_helpers::{
 };
 use crate::scalar_funcs::geo_helpers::{arrow_to_geo, arrow_to_geo_scalar, geo_to_arrow, geo_to_arrow_scalar};
 use crate::scalar_funcs::wkb::read_wkb;
+use std::sync::OnceLock;
 
 pub fn spark_st_point(
     args: &[ColumnarValue],
@@ -386,6 +387,30 @@ pub fn spark_st_polygon(
     Ok(ColumnarValue::Array(Arc::new(geometry_array)))
 }
 
+const SIN_COS_TABLE_SIZE: usize = 10000;
+static SIN_TABLE: OnceLock<[f64; SIN_COS_TABLE_SIZE]> = OnceLock::new();
+static COS_TABLE: OnceLock<[f64; SIN_COS_TABLE_SIZE]> = OnceLock::new();
+
+fn get_sin_table() -> &'static [f64; SIN_COS_TABLE_SIZE] {
+    SIN_TABLE.get_or_init(|| {
+        let mut table = [0.0; SIN_COS_TABLE_SIZE];
+        for i in 0..SIN_COS_TABLE_SIZE {
+            table[i] = (i as f64 * 2.0 * std::f64::consts::PI / SIN_COS_TABLE_SIZE as f64).sin();
+        }
+        table
+    })
+}
+
+fn get_cos_table() -> &'static [f64; SIN_COS_TABLE_SIZE] {
+    COS_TABLE.get_or_init(|| {
+        let mut table = [0.0; SIN_COS_TABLE_SIZE];
+        for i in 0..SIN_COS_TABLE_SIZE {
+            table[i] = (i as f64 * 2.0 * std::f64::consts::PI / SIN_COS_TABLE_SIZE as f64).cos();
+        }
+        table
+    })
+}
+
 pub fn spark_st_random_polygon(
     args: &[ColumnarValue],
     _data_type: &DataType,
@@ -438,11 +463,13 @@ pub fn spark_st_random_polygon(
         }
     };
 
-    // Create the geometry builder
+    let sin_table = get_sin_table();
+    let cos_table = get_cos_table();
+    
     let mut geometry_builder = create_geometry_builder_polygon();
 
     // Initialize vectors to hold angles, x_coords, and y_coords for reuse
-    let mut angles = Vec::new();
+    let mut angle_indices = Vec::new();
     let mut x_coords = Vec::new();
     let mut y_coords = Vec::new();
 
@@ -458,12 +485,12 @@ pub fn spark_st_random_polygon(
         let mut random = XORShiftRandom::new(seed);
 
         // Generate random angles
-        angles.clear();
-        angles.reserve(num_segments as usize);
+        angle_indices.clear();
+        angle_indices.reserve(num_segments as usize);
         for _ in 0..num_segments {
-            angles.push(random.next_f64() * 2.0 * std::f64::consts::PI);
+            angle_indices.push(random.next_int(SIN_COS_TABLE_SIZE as i32));
         }
-        angles.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        angle_indices.sort();
 
         // Generate coordinates
         x_coords.clear();
@@ -472,10 +499,10 @@ pub fn spark_st_random_polygon(
         y_coords.reserve((num_segments + 1) as usize);
 
         for k in 0..num_segments {
-            let angle = angles[k as usize];
+            let angle_idx = angle_indices[k as usize] as usize;
             let distance = random.next_f64() * (max_size / 2.0);
-            let x = center_x + distance * angle.cos();
-            let y = center_y + distance * angle.sin();
+            let x = center_x + distance * cos_table[angle_idx];
+            let y = center_y + distance * sin_table[angle_idx];
             x_coords.push(x);
             y_coords.push(y);
         }
@@ -613,10 +640,33 @@ impl XORShiftRandom {
 
     fn next(&mut self, bits: i32) -> i32 {
         let mut next_seed = self.seed ^ (self.seed << 21);
-        next_seed ^= next_seed >> 35;
+        next_seed ^= ((next_seed as u64) >> 35) as i64;
         next_seed ^= next_seed << 4;
         self.seed = next_seed;
         (next_seed & ((1i64 << bits) - 1)) as i32
+    }
+
+    fn next_int(&mut self, bound: i32) -> i32 {
+        if bound <= 0 {
+            panic!("bound must be positive");
+        }
+
+        let mut r = self.next(31);
+        let m = bound - 1;
+        
+        if (bound & m) == 0 {  // bound is a power of 2
+            r = ((bound as i64 * r as i64) >> 31) as i32
+        } else {
+            loop {
+                let u = r;
+                r = u % bound;
+                if u - r + m >= 0 {
+                    break;
+                }
+                r = self.next(31);
+            }
+        }
+        r
     }
 
     fn next_f64(&mut self) -> f64 {
@@ -975,7 +1025,9 @@ pub fn spark_st_within(
     // the zip function is used to iterate over both geometry arrays simultaneously, and the intersects function is applied to each pair of geometries.
     // This approach leverages vectorization by processing the arrays in a batch-oriented manner, which can be more efficient than processing each element individually.
     for (g1, g2) in geos_geom_array1.iter().zip(geos_geom_array2.iter()) {
-        let within = g1.is_within(g2);
+        let g1_bounds = g1.bounding_rect().unwrap();
+        let g2_bounds = g2.bounding_rect().unwrap();
+        let within = g1_bounds.is_within(&g2_bounds) && g1.is_within(g2);
         boolean_builder.append_value(within);
     }
 
@@ -1009,7 +1061,9 @@ pub fn spark_st_contains(
     // the zip function is used to iterate over both geometry arrays simultaneously, and the intersects function is applied to each pair of geometries.
     // This approach leverages vectorization by processing the arrays in a batch-oriented manner, which can be more efficient than processing each element individually.
     for (g1, g2) in geos_geom_array1.iter().zip(geos_geom_array2.iter()) {
-        let contains = g1.contains(g2);
+        let g1_bounds = g1.bounding_rect().unwrap();
+        let g2_bounds = g2.bounding_rect().unwrap();
+        let contains = g1_bounds.contains(&g2_bounds) && g1.contains(g2);
         boolean_builder.append_value(contains);
     }
 
@@ -1025,6 +1079,7 @@ mod tests {
     use arrow::datatypes::{DataType, Field};
     use datafusion::physical_plan::ColumnarValue;
     use arrow_array::{ArrayRef, BooleanArray, StringArray};
+    use wkt::ToWkt;
     use crate::scalar_funcs::geometry_helpers::{append_linestring, create_geometry_builder};
 
     #[test]
@@ -1376,18 +1431,19 @@ mod tests {
         // Create sample x1, y1, x2, and y2 coordinates as Float64Array
         let xs = vec![10.0, 20.0, 30.0];
         let ys = vec![40.0, 50.0, 60.0];
+        let seed = vec![123, 456, 789];
         let x_coords = Float64Array::from(xs.clone());
         let y_coords = Float64Array::from(ys.clone());
         let max_size = ScalarValue::Float64(Some(0.1));
-        let num_segments = ScalarValue::Int32(Some(3));
-        let seed = ScalarValue::Int64(Some(123));
+        let num_segments = ScalarValue::Int32(Some(10));
+        let seed = Int64Array::from(seed.clone());
 
         // Convert to ColumnarValue
         let x_value = ColumnarValue::Array(Arc::new(x_coords));
         let y_value = ColumnarValue::Array(Arc::new(y_coords));
         let max_size_value = ColumnarValue::Scalar(max_size);
         let num_segments_value = ColumnarValue::Scalar(num_segments);
-        let seed_value = ColumnarValue::Scalar(seed);
+        let seed_value = ColumnarValue::Array(Arc::new(seed));
 
         // Call the spark_st_polygon function with x1, y1, x2, and y2 arguments
         let result = spark_st_random_polygon(&[x_value, y_value, max_size_value, num_segments_value, seed_value], &DataType::Null).unwrap();
@@ -1400,6 +1456,7 @@ mod tests {
             assert_eq!(polygons.len(), 3);
             for k in 0..3 {
                 let polygon = &polygons[k];
+                println!("polygon: {}", polygon.wkt_string());
                 let centroid = polygon.centroid().unwrap();
                 assert!((centroid.x() - xs[k]).abs() < 0.5);
                 assert!((centroid.y() - ys[k]).abs() < 0.5);
@@ -1415,18 +1472,19 @@ mod tests {
         // Create sample x1, y1, x2, and y2 coordinates as Float64Array
         let xs = vec![10.0, 20.0, 30.0];
         let ys = vec![40.0, 50.0, 60.0];
+        let seed = vec![123, 456, 789];
         let x_coords = Float64Array::from(xs.clone());
         let y_coords = Float64Array::from(ys.clone());
         let max_segment_size = ScalarValue::Float64(Some(0.1));
         let num_segments = ScalarValue::Int32(Some(5));
-        let seed = ScalarValue::Int64(Some(123));
+        let seed = Int64Array::from(seed.clone());
 
         // Convert to ColumnarValue
         let x_value = ColumnarValue::Array(Arc::new(x_coords));
         let y_value = ColumnarValue::Array(Arc::new(y_coords));
         let max_segment_size_value = ColumnarValue::Scalar(max_segment_size);
         let num_segments_value = ColumnarValue::Scalar(num_segments);
-        let seed_value = ColumnarValue::Scalar(seed);
+        let seed_value = ColumnarValue::Array(Arc::new(seed));
 
         // Call the spark_st_random_linestring function with x1, y1, x2, and y2 arguments
         let result = spark_st_random_linestring(&[x_value, y_value, max_segment_size_value, num_segments_value, seed_value], &DataType::Null).unwrap();
@@ -1439,6 +1497,7 @@ mod tests {
             assert_eq!(linestrings.len(), 3);
             for k in 0..3 {
                 let linestring = &linestrings[k];
+                println!("linestring: {}", linestring.wkt_string());
                 assert_eq!(6, linestring.coords_count());
                 for coord in linestring.coords_iter() {
                     assert!((coord.x - xs[k]).abs() < 0.5);
@@ -1447,6 +1506,14 @@ mod tests {
             }
         } else {
             panic!("Expected geometry to be linestring");
+        }
+    }
+
+    #[test]
+    fn test_xorshift_random() {
+        let mut random = XORShiftRandom::new(123);
+        for _ in 0..10 {
+            println!("{}", random.next_f64());
         }
     }
 }
