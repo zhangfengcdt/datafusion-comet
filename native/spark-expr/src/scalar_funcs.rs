@@ -52,7 +52,7 @@ pub use chr::SparkChrFunc;
 
 pub mod hash_expressions;
 mod st;
-mod geometry_helpers;
+pub mod geometry_helpers;
 mod geo_helpers;
 mod wkb;
 
