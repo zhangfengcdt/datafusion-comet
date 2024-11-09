@@ -782,90 +782,6 @@ pub fn spark_st_intersects(
     let geom1 = &args[0];
     let geom2 = &args[1];
 
-    // Ensure both arguments are arrays
-    let array1 = match geom1 {
-        ColumnarValue::Array(array) => array,
-        _ => return Err(DataFusionError::Internal("Expected array input for geom1".to_string())),
-    };
-
-    let array2 = match geom2 {
-        ColumnarValue::Array(array) => array,
-        _ => return Err(DataFusionError::Internal("Expected array input for geom2".to_string())),
-    };
-
-    // Downcast to StructArray
-    let struct_array1 = array1.as_any().downcast_ref::<StructArray>().unwrap();
-    let struct_array2 = array2.as_any().downcast_ref::<StructArray>().unwrap();
-
-    // Extract point arrays
-    let point_array1 = struct_array1
-        .column_by_name(GEOMETRY_TYPE_POINT)
-        .ok_or_else(|| DataFusionError::Internal("Missing 'point' field".to_string()))?
-        .as_any()
-        .downcast_ref::<StructArray>()
-        .unwrap();
-
-    let point_array2 = struct_array2
-        .column_by_name(GEOMETRY_TYPE_POINT)
-        .ok_or_else(|| DataFusionError::Internal("Missing 'point' field".to_string()))?
-        .as_any()
-        .downcast_ref::<StructArray>()
-        .unwrap();
-
-    // Extract x and y arrays
-    let x_array1 = point_array1
-        .column_by_name("x")
-        .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
-        .as_any()
-        .downcast_ref::<Float64Array>()
-        .unwrap();
-
-    let y_array1 = point_array1
-        .column_by_name("y")
-        .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
-        .as_any()
-        .downcast_ref::<Float64Array>()
-        .unwrap();
-
-    let x_array2 = point_array2
-        .column_by_name("x")
-        .ok_or_else(|| DataFusionError::Internal("Missing 'x' field".to_string()))?
-        .as_any()
-        .downcast_ref::<Float64Array>()
-        .unwrap();
-
-    let y_array2 = point_array2
-        .column_by_name("y")
-        .ok_or_else(|| DataFusionError::Internal("Missing 'y' field".to_string()))?
-        .as_any()
-        .downcast_ref::<Float64Array>()
-        .unwrap();
-
-    // Compare x and y arrays
-    let x_eq = arrow::compute::kernels::cmp::eq(x_array1, x_array2)?;
-    let y_eq = arrow::compute::kernels::cmp::eq(y_array1, y_array2)?;
-
-    // Combine the results
-    let boolean_array = arrow::compute::kernels::boolean::and(&x_eq, &y_eq)?;
-
-    Ok(ColumnarValue::Array(Arc::new(boolean_array)))
-}
-
-pub fn spark_st_intersects_use_geo(
-    args: &[ColumnarValue],
-    _data_type: &DataType,
-) -> Result<ColumnarValue, DataFusionError> {
-    // Ensure there are exactly two arguments
-    if args.len() != 2 {
-        return Err(DataFusionError::Internal(
-            "Expected exactly two arguments".to_string(),
-        ));
-    }
-
-    // Extract the geometries from the arguments
-    let geom1 = &args[0];
-    let geom2 = &args[1];
-
     // Call the geometry_to_geos function
     let geos_geom_array1 = arrow_to_geo(&geom1).unwrap();
     let geos_geom_array2 = arrow_to_geo(&geom2).unwrap();
@@ -1095,43 +1011,6 @@ mod tests {
     }
 
     #[test]
-    fn test_spark_st_point() {
-        // Create sample x and y coordinates as Float64Array
-        let x_coords = Float64Array::from(vec![1.0, 1.0]);
-        let y_coords = Float64Array::from(vec![2.0, 2.0]);
-
-        // Convert to ColumnarValue
-        let x_value = ColumnarValue::Array(Arc::new(x_coords));
-        let y_value = ColumnarValue::Array(Arc::new(y_coords));
-
-        // Call the spark_st_point function with x and y arguments
-        let point1 = spark_st_point(&[x_value.clone(), y_value.clone()], &DataType::Null).unwrap();
-
-        // Call the spark_st_point function with x and y arguments
-        let point2 = spark_st_point(&[x_value.clone(), y_value.clone()], &DataType::Null).unwrap();
-
-        // assert the point1 and point2 are of length 2
-        if let ColumnarValue::Array(ref array) = point1 {
-            let result_array = array.as_any().downcast_ref::<StructArray>().unwrap();
-            assert_eq!(result_array.len(), 2);
-        } else {
-            panic!("Expected array result");
-        }
-
-        let result = spark_st_intersects(&[point1.clone(), point2.clone()], &DataType::Boolean).unwrap();
-
-        // Assert the result is as expected
-        if let ColumnarValue::Array(array) = result {
-            let result_array = array.as_any().downcast_ref::<BooleanArray>().unwrap();
-            assert_eq!(result_array.len(), 2);
-            assert_eq!(result_array.value(0), true);
-            assert_eq!(result_array.value(1), true);
-        } else {
-            panic!("Expected array result");
-        }
-    }
-
-    #[test]
     fn test_spark_st_points() {
         // Create sample x and y coordinates as Float64Array
         let x_coords = Float64Array::from(vec![1.0, 2.0, 3.0]);
@@ -1205,29 +1084,6 @@ mod tests {
             assert_eq!(result_array.column(0).as_any().downcast_ref::<StringArray>().unwrap().value(0), "polygon"); // "type"
         } else {
             panic!("Expected geometry to be polygon");
-        }
-    }
-
-    #[test]
-    fn test_spark_st_intersects() {
-        let mut geometry_builder = create_geometry_builder();
-        let x_coords = vec![1.0, 2.0, 5.0];
-        let y_coords = vec![3.0, 4.0, 6.0];
-        append_linestring(&mut geometry_builder, &x_coords, &y_coords);
-
-        let geom_array = geometry_builder.finish();
-
-        let geometry = ColumnarValue::Array(Arc::new(geom_array.clone()));
-
-        // Call the spark_st_intersects function
-        let result = spark_st_intersects(&[geometry.clone(), geometry.clone()], &DataType::Boolean).unwrap();
-
-        // Assert the result is as expected
-        if let ColumnarValue::Array(array) = result {
-            let result_array = array.as_any().downcast_ref::<BooleanArray>().unwrap();
-            assert_eq!(result_array.value(0), true); // Linestrings intersect
-        } else {
-            panic!("Expected array result");
         }
     }
 

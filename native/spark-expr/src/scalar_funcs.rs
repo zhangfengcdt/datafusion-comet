@@ -59,7 +59,7 @@ mod wkb;
 pub use st::{spark_st_envelope, spark_st_point, spark_st_points,
              spark_st_linestring, spark_st_multilinestring, spark_st_polygon,
              spark_st_random_polygon, spark_st_random_linestring,
-             spark_st_intersects, spark_st_intersects_use_geo, spark_st_intersects_wkb,
+             spark_st_intersects, spark_st_intersects_wkb,
              spark_st_geomfromwkt, spark_st_geomfromwkb, spark_st_contains, spark_st_within};
 
 // exposed for benchmark only
