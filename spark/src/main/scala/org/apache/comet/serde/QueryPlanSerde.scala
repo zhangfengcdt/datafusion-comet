@@ -1296,12 +1296,10 @@ object QueryPlanSerde extends Logging with ShimQueryPlanSerde with CometExprShim
           }
 
         case StringSpace(child) =>
-          createUnaryExpr(child, inputs).map { expr =>
-            ExprOuterClass.Expr
-              .newBuilder()
-              .setStringSpace(expr)
-              .build()
-          }
+          createUnaryExpr(
+            child,
+            inputs,
+            (builder, unaryExpr) => builder.setStringSpace(unaryExpr))
 
         case Hour(child, timeZoneId) =>
           val childExpr = exprToProtoInternal(child, inputs)
@@ -1436,20 +1434,10 @@ object QueryPlanSerde extends Logging with ShimQueryPlanSerde with CometExprShim
           optExprWithInfo(optExpr, expr, child)
 
         case IsNull(child) =>
-          createUnaryExpr(child, inputs).map { expr =>
-            ExprOuterClass.Expr
-              .newBuilder()
-              .setIsNull(expr)
-              .build()
-          }
+          createUnaryExpr(child, inputs, (builder, unaryExpr) => builder.setIsNull(unaryExpr))
 
         case IsNotNull(child) =>
-          createUnaryExpr(child, inputs).map { expr =>
-            ExprOuterClass.Expr
-              .newBuilder()
-              .setIsNotNull(expr)
-              .build()
-          }
+          createUnaryExpr(child, inputs, (builder, unaryExpr) => builder.setIsNotNull(unaryExpr))
 
         case IsNaN(child) =>
           val childExpr = exprToProtoInternal(child, inputs)
@@ -1944,12 +1932,7 @@ object QueryPlanSerde extends Logging with ShimQueryPlanSerde with CometExprShim
           }
 
         case BitwiseNot(child) =>
-          createUnaryExpr(child, inputs).map { expr =>
-            ExprOuterClass.Expr
-              .newBuilder()
-              .setBitwiseNot(expr)
-              .build()
-          }
+          createUnaryExpr(child, inputs, (builder, unaryExpr) => builder.setBitwiseNot(unaryExpr))
 
         case BitwiseOr(left, right) =>
           createBinaryExpr(left, right, inputs).map { builder =>
@@ -2015,12 +1998,7 @@ object QueryPlanSerde extends Logging with ShimQueryPlanSerde with CometExprShim
           in(expr, value, list, inputs, true)
 
         case Not(child) =>
-          createUnaryExpr(child, inputs).map { expr =>
-            ExprOuterClass.Expr
-              .newBuilder()
-              .setNot(expr)
-              .build()
-          }
+          createUnaryExpr(child, inputs, (builder, unaryExpr) => builder.setNot(unaryExpr))
 
         case UnaryMinus(child, failOnError) =>
           val childExpr = exprToProtoInternal(child, inputs)
@@ -2301,16 +2279,39 @@ object QueryPlanSerde extends Logging with ShimQueryPlanSerde with CometExprShim
       }
     }
 
+    /**
+     * Creates a UnaryExpr by calling exprToProtoInternal for the provided child expression and
+     * then invokes the supplied function to wrap this UnaryExpr in a top-level Expr.
+     *
+     * @param child
+     *   Spark expression
+     * @param inputs
+     *   Inputs to the expression
+     * @param f
+     *   Function that accepts an Expr.Builder and a UnaryExpr and builds the specific top-level
+     *   Expr
+     * @return
+     *   Some(Expr) or None if not supported
+     */
     def createUnaryExpr(
         child: Expression,
-        inputs: Seq[Attribute]): Option[ExprOuterClass.UnaryExpr] = {
+        inputs: Seq[Attribute],
+        f: (ExprOuterClass.Expr.Builder, ExprOuterClass.UnaryExpr) => ExprOuterClass.Expr.Builder)
+        : Option[ExprOuterClass.Expr] = {
       val childExpr = exprToProtoInternal(child, inputs)
       if (childExpr.isDefined) {
+        // create the generic UnaryExpr message
+        val inner = ExprOuterClass.UnaryExpr
+          .newBuilder()
+          .setChild(childExpr.get)
+          .build()
+        // call the user-supplied function to wrap UnaryExpr in a top-level Expr
+        // such as Expr.IsNull or Expr.IsNotNull
         Some(
-          ExprOuterClass.UnaryExpr
-            .newBuilder()
-            .setChild(childExpr.get)
-            .build())
+          f(
+            ExprOuterClass.Expr
+              .newBuilder(),
+            inner).build())
       } else {
         withInfo(expr, child)
         None
