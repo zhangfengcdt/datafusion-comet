@@ -67,6 +67,8 @@ object QueryPlanSerde extends Logging with ShimQueryPlanSerde with CometExprShim
     case dt if isTimestampNTZType(dt) => true
     case s: StructType if allowStruct =>
       s.fields.map(_.dataType).forall(supportedDataType(_, allowStruct))
+    case a: ArrayType if allowStruct =>
+      supportedDataType(a.elementType, allowStruct)
     case dt =>
       emitWarning(s"unsupported Spark data type: $dt")
       false
@@ -912,6 +914,18 @@ object QueryPlanSerde extends Logging with ShimQueryPlanSerde with CometExprShim
       }
 
       expr match {
+        case u @ ScalaUDF(_, _, children, _, _, udfName, _, _) =>
+          val childExprs = children.map(exprToProtoInternal(_, inputs))
+
+          if (childExprs.forall(_.isDefined)) {
+            val args = childExprs.map(_.get).map(Some(_))
+            val optExpr = scalarExprToProtoWithReturnType(udfName.get, u.dataType, args: _*)
+            optExprWithInfo(optExpr, u, children: _*)
+          } else {
+            withInfo(u, children: _*)
+            None
+          }
+
         case a @ Alias(_, _) =>
           val r = exprToProtoInternal(a.child, inputs)
           if (r.isEmpty) {

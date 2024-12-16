@@ -22,6 +22,11 @@ use crate::scalar_funcs::{
     spark_ceil, spark_date_add, spark_date_sub, spark_decimal_div, spark_floor, spark_hex,
     spark_isnan, spark_make_decimal, spark_murmur3_hash, spark_read_side_padding, spark_round,
     spark_unhex, spark_unscaled_value, spark_xxhash64, SparkChrFunc,
+    spark_st_envelope, spark_st_point, spark_st_points, spark_st_linestring, spark_st_multilinestring, spark_st_polygon,
+    spark_st_intersects, spark_st_intersects_wkb,
+    spark_st_geomfromwkt, spark_st_geomfromwkb,
+    spark_st_contains, spark_st_within,
+    spark_st_random_polygon, spark_st_random_linestring
 };
 use arrow_schema::DataType;
 use datafusion_common::{DataFusionError, Result as DataFusionResult};
@@ -61,6 +66,48 @@ pub fn create_comet_physical_fun(
     registry: &dyn FunctionRegistry,
 ) -> Result<Arc<ScalarUDF>, DataFusionError> {
     match fun_name {
+        "st_point" => {
+            make_comet_scalar_udf!("st_point", spark_st_point, data_type)
+        }
+        "st_points" => {
+            make_comet_scalar_udf!("st_points", spark_st_points, data_type)
+        }
+        "st_linestring" => {
+            make_comet_scalar_udf!("st_linestring", spark_st_linestring, data_type)
+        }
+        "st_multilinestring" => {
+            make_comet_scalar_udf!("st_multilinestring", spark_st_multilinestring, data_type)
+        }
+        "st_polygon" => {
+            make_comet_scalar_udf!("st_polygon", spark_st_polygon, data_type)
+        }
+        "st_envelope" => {
+            make_comet_scalar_udf!("st_envelope", spark_st_envelope, data_type)
+        }
+        "st_randompolygon" => {
+            make_comet_scalar_udf!("st_randompolygon", spark_st_random_polygon, data_type)
+        }
+        "st_randomlinestring" => {
+            make_comet_scalar_udf!("st_randomlinestring", spark_st_random_linestring, data_type)
+        }
+        "st_intersects" => {
+            make_comet_scalar_udf!("st_intersects", spark_st_intersects, data_type)
+        }
+        "st_intersects_wkb" => {
+            make_comet_scalar_udf!("st_intersects_wkb", spark_st_intersects_wkb, data_type)
+        }
+        "st_geomfromwkt" => {
+            make_comet_scalar_udf!("st_geomfromwkt", spark_st_geomfromwkt, data_type)
+        }
+        "st_geomfromwkb" => {
+            make_comet_scalar_udf!("st_geomfromwkb", spark_st_geomfromwkb, data_type)
+        }
+        "st_within" => {
+            make_comet_scalar_udf!("st_within", spark_st_within, data_type)
+        }
+        "st_contains" => {
+            make_comet_scalar_udf!("st_contains", spark_st_contains, data_type)
+        }
         "ceil" => {
             make_comet_scalar_udf!("ceil", spark_ceil, data_type)
         }
