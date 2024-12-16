@@ -861,10 +861,7 @@ class CometCastSuite extends CometTestBase with AdaptiveSparkPlanHelper {
           // primitives
           checkSparkAnswerAndOperator(
             "SELECT CAST(struct(_1, _2, _3, _4, _5, _6, _7, _8) as string) FROM tbl")
-          // TODO: enable tests for unsigned ints (_9, _10, _11, _12) once
-          //  https://github.com/apache/datafusion-comet/issues/1067 is resolved
-          // checkSparkAnswerAndOperator(
-          //   "SELECT CAST(struct(_9, _10, _11, _12) as string) FROM tbl")
+          checkSparkAnswerAndOperator("SELECT CAST(struct(_9, _10, _11, _12) as string) FROM tbl")
           // decimals
           // TODO add _16 when https://github.com/apache/datafusion-comet/issues/1068 is resolved
           checkSparkAnswerAndOperator("SELECT CAST(struct(_15, _17) as string) FROM tbl")
@@ -879,6 +876,48 @@ class CometCastSuite extends CometTestBase with AdaptiveSparkPlanHelper {
         }
       }
     }
+  }
+
+  test("cast StructType to StructType") {
+    Seq(true, false).foreach { dictionaryEnabled =>
+      withTempDir { dir =>
+        val path = new Path(dir.toURI.toString, "test.parquet")
+        makeParquetFileAllTypes(path, dictionaryEnabled = dictionaryEnabled, 10000)
+        withParquetTable(path.toString, "tbl") {
+          checkSparkAnswerAndOperator(
+            "SELECT CAST(CASE WHEN _1 THEN struct(_1, _2, _3, _4) ELSE null END as " +
+              "struct<_1:string, _2:string, _3:string, _4:string>) FROM tbl")
+        }
+      }
+    }
+  }
+
+  test("cast between decimals with different precision and scale") {
+    // cast between default Decimal(38, 18) to Decimal(6,2)
+    val values = Seq(BigDecimal("12345.6789"), BigDecimal("9876.5432"), BigDecimal("123.4567"))
+    val df = withNulls(values)
+      .toDF("b")
+      .withColumn("a", col("b").cast(DecimalType(6, 2)))
+    checkSparkAnswer(df)
+  }
+
+  test("cast between decimals with higher precision than source") {
+    // cast between Decimal(10, 2) to Decimal(10,4)
+    castTest(generateDecimalsPrecision10Scale2(), DataTypes.createDecimalType(10, 4))
+  }
+
+  test("cast between decimals with negative precision") {
+    // cast to negative scale
+    checkSparkMaybeThrows(
+      spark.sql("select a, cast(a as DECIMAL(10,-4)) from t order by a")) match {
+      case (expected, actual) =>
+        assert(expected.contains("PARSE_SYNTAX_ERROR") === actual.contains("PARSE_SYNTAX_ERROR"))
+    }
+  }
+
+  test("cast between decimals with zero precision") {
+    // cast between Decimal(10, 2) to Decimal(10,0)
+    castTest(generateDecimalsPrecision10Scale2(), DataTypes.createDecimalType(10, 0))
   }
 
   private def generateFloats(): DataFrame = {

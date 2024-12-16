@@ -415,32 +415,32 @@ pub fn arrow_to_geo_scalar(geom: &ColumnarValue) -> Result<geo_types::Geometry, 
     }
 }
 
-pub fn geo_to_arrow(geometries: &[geo::Geometry]) -> Result<ColumnarValue, DataFusionError> {
+pub fn geo_to_arrow(geometries: &[Geometry]) -> Result<ColumnarValue, DataFusionError> {
     if geometries.is_empty() {
         return Err(DataFusionError::Internal("Empty geometries array".to_string()));
     }
 
     let mut geometry_builder = match geometries[0] {
-        geo::Geometry::Point(_) => create_geometry_builder_point(),
-        geo::Geometry::MultiPoint(_) => create_geometry_builder_points(),
-        geo::Geometry::LineString(_) => create_geometry_builder_linestring(),
-        geo::Geometry::MultiLineString(_) => create_geometry_builder_multilinestring(),
-        geo::Geometry::Polygon(_) => create_geometry_builder_polygon(),
-        geo::Geometry::GeometryCollection(_) => return Err(DataFusionError::Internal("Unsupported geometry type: GeometryCollection".to_string())),
-        geo::Geometry::Rect(_) => return Err(DataFusionError::Internal("Unsupported geometry type: Rect".to_string())),
-        geo::Geometry::Triangle(_) => return Err(DataFusionError::Internal("Unsupported geometry type: Triangle".to_string())),
-        geo::Geometry::Line(_) => return Err(DataFusionError::Internal("Unsupported geometry type: Line".to_string())),
-        geo::Geometry::MultiPolygon(_) => return Err(DataFusionError::Internal("Unsupported geometry type: MultiPolygon".to_string())),
+        Geometry::Point(_) => create_geometry_builder_point(),
+        Geometry::MultiPoint(_) => create_geometry_builder_points(),
+        Geometry::LineString(_) => create_geometry_builder_linestring(),
+        Geometry::MultiLineString(_) => create_geometry_builder_multilinestring(),
+        Geometry::Polygon(_) => create_geometry_builder_polygon(),
+        Geometry::GeometryCollection(_) => return Err(DataFusionError::Internal("Unsupported geometry type: GeometryCollection".to_string())),
+        Geometry::Rect(_) => return Err(DataFusionError::Internal("Unsupported geometry type: Rect".to_string())),
+        Geometry::Triangle(_) => return Err(DataFusionError::Internal("Unsupported geometry type: Triangle".to_string())),
+        Geometry::Line(_) => return Err(DataFusionError::Internal("Unsupported geometry type: Line".to_string())),
+        Geometry::MultiPolygon(_) => return Err(DataFusionError::Internal("Unsupported geometry type: MultiPolygon".to_string())),
     };
 
     for geom in geometries {
         match geom {
-            geo::Geometry::Point(point) => {
+            Geometry::Point(point) => {
                 let x = point.x();
                 let y = point.y();
                 append_point(&mut geometry_builder, x, y);
             }
-            geo::Geometry::MultiPoint(multi_point) => {
+            Geometry::MultiPoint(multi_point) => {
                 let mut x_coords = Vec::with_capacity(multi_point.0.len());
                 let mut y_coords = Vec::with_capacity(multi_point.0.len());
                 for point in &multi_point.0 {
@@ -449,7 +449,7 @@ pub fn geo_to_arrow(geometries: &[geo::Geometry]) -> Result<ColumnarValue, DataF
                 }
                 append_multipoint(&mut geometry_builder, &x_coords, &y_coords);
             }
-            geo::Geometry::LineString(line_string) => {
+            Geometry::LineString(line_string) => {
                 let mut x_coords = Vec::with_capacity(line_string.0.len());
                 let mut y_coords = Vec::with_capacity(line_string.0.len());
                 for coord in &line_string.0 {
@@ -458,7 +458,7 @@ pub fn geo_to_arrow(geometries: &[geo::Geometry]) -> Result<ColumnarValue, DataF
                 }
                 append_linestring(&mut geometry_builder, &x_coords, &y_coords);
             }
-            geo::Geometry::MultiLineString(multi_line_string) => {
+            Geometry::MultiLineString(multi_line_string) => {
                 for line_string in &multi_line_string.0 {
                     let mut x_coords = Vec::with_capacity(line_string.0.len());
                     let mut y_coords = Vec::with_capacity(line_string.0.len());
@@ -469,7 +469,7 @@ pub fn geo_to_arrow(geometries: &[geo::Geometry]) -> Result<ColumnarValue, DataF
                     append_multilinestring(&mut geometry_builder, &[(x_coords, y_coords)]);
                 }
             }
-            geo::Geometry::Polygon(polygon) => {
+            Geometry::Polygon(polygon) => {
                 let exterior = &polygon.exterior();
                 let mut x_coords = Vec::with_capacity(exterior.0.len());
                 let mut y_coords = Vec::with_capacity(exterior.0.len());
@@ -490,25 +490,25 @@ pub fn geo_to_arrow(geometries: &[geo::Geometry]) -> Result<ColumnarValue, DataF
 
 pub fn geo_to_arrow_scalar(geometry: &Geometry) -> Result<ColumnarValue, DataFusionError> {
     let mut geometry_builder = match geometry {
-        geo::Geometry::Point(_) => create_geometry_builder_point(),
-        geo::Geometry::MultiPoint(_) => create_geometry_builder_points(),
-        geo::Geometry::LineString(_) => create_geometry_builder_linestring(),
-        geo::Geometry::MultiLineString(_) => create_geometry_builder_multilinestring(),
-        geo::Geometry::Polygon(_) => create_geometry_builder_polygon(),
-        geo::Geometry::GeometryCollection(_) => return Err(DataFusionError::Internal("Unsupported geometry type: GeometryCollection".to_string())),
-        geo::Geometry::Rect(_) => return Err(DataFusionError::Internal("Unsupported geometry type: Rect".to_string())),
-        geo::Geometry::Triangle(_) => return Err(DataFusionError::Internal("Unsupported geometry type: Triangle".to_string())),
-        geo::Geometry::Line(_) => return Err(DataFusionError::Internal("Unsupported geometry type: Line".to_string())),
-        geo::Geometry::MultiPolygon(_) => return Err(DataFusionError::Internal("Unsupported geometry type: MultiPolygon".to_string())),
+        Geometry::Point(_) => create_geometry_builder_point(),
+        Geometry::MultiPoint(_) => create_geometry_builder_points(),
+        Geometry::LineString(_) => create_geometry_builder_linestring(),
+        Geometry::MultiLineString(_) => create_geometry_builder_multilinestring(),
+        Geometry::Polygon(_) => create_geometry_builder_polygon(),
+        Geometry::GeometryCollection(_) => return Err(DataFusionError::Internal("Unsupported geometry type: GeometryCollection".to_string())),
+        Geometry::Rect(_) => return Err(DataFusionError::Internal("Unsupported geometry type: Rect".to_string())),
+        Geometry::Triangle(_) => return Err(DataFusionError::Internal("Unsupported geometry type: Triangle".to_string())),
+        Geometry::Line(_) => return Err(DataFusionError::Internal("Unsupported geometry type: Line".to_string())),
+        Geometry::MultiPolygon(_) => return Err(DataFusionError::Internal("Unsupported geometry type: MultiPolygon".to_string())),
     };
 
     match geometry {
-        geo::Geometry::Point(point) => {
+        Geometry::Point(point) => {
             let x = point.x();
             let y = point.y();
             append_point(&mut geometry_builder, x, y);
         }
-        geo::Geometry::MultiPoint(multi_point) => {
+        Geometry::MultiPoint(multi_point) => {
             let mut x_coords = Vec::with_capacity(multi_point.0.len());
             let mut y_coords = Vec::with_capacity(multi_point.0.len());
             for point in &multi_point.0 {
@@ -517,7 +517,7 @@ pub fn geo_to_arrow_scalar(geometry: &Geometry) -> Result<ColumnarValue, DataFus
             }
             append_multipoint(&mut geometry_builder, &x_coords, &y_coords);
         }
-        geo::Geometry::LineString(line_string) => {
+        Geometry::LineString(line_string) => {
             let mut x_coords = Vec::with_capacity(line_string.0.len());
             let mut y_coords = Vec::with_capacity(line_string.0.len());
             for coord in &line_string.0 {
@@ -526,7 +526,7 @@ pub fn geo_to_arrow_scalar(geometry: &Geometry) -> Result<ColumnarValue, DataFus
             }
             append_linestring(&mut geometry_builder, &x_coords, &y_coords);
         }
-        geo::Geometry::MultiLineString(multi_line_string) => {
+        Geometry::MultiLineString(multi_line_string) => {
             for line_string in &multi_line_string.0 {
                 let mut x_coords = Vec::with_capacity(line_string.0.len());
                 let mut y_coords = Vec::with_capacity(line_string.0.len());
@@ -537,7 +537,7 @@ pub fn geo_to_arrow_scalar(geometry: &Geometry) -> Result<ColumnarValue, DataFus
                 append_multilinestring(&mut geometry_builder, &[(x_coords, y_coords)]);
             }
         }
-        geo::Geometry::Polygon(polygon) => {
+        Geometry::Polygon(polygon) => {
             let exterior = &polygon.exterior();
             let mut x_coords = Vec::with_capacity(exterior.0.len());
             let mut y_coords = Vec::with_capacity(exterior.0.len());

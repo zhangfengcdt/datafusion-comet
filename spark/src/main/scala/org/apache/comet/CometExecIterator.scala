@@ -23,7 +23,7 @@ import org.apache.spark._
 import org.apache.spark.sql.comet.CometMetricNode
 import org.apache.spark.sql.vectorized._
 
-import org.apache.comet.CometConf.{COMET_BATCH_SIZE, COMET_BLOCKING_THREADS, COMET_DEBUG_ENABLED, COMET_EXEC_MEMORY_FRACTION, COMET_EXPLAIN_NATIVE_ENABLED, COMET_WORKER_THREADS}
+import org.apache.comet.CometConf.{COMET_BATCH_SIZE, COMET_BLOCKING_THREADS, COMET_DEBUG_ENABLED, COMET_EXPLAIN_NATIVE_ENABLED, COMET_WORKER_THREADS}
 import org.apache.comet.vector.NativeUtil
 
 /**
@@ -39,13 +39,19 @@ import org.apache.comet.vector.NativeUtil
  *   The input iterators producing sequence of batches of Arrow Arrays.
  * @param protobufQueryPlan
  *   The serialized bytes of Spark execution plan.
+ * @param numParts
+ *   The number of partitions.
+ * @param partitionIndex
+ *   The index of the partition.
  */
 class CometExecIterator(
     val id: Long,
     inputs: Seq[Iterator[ColumnarBatch]],
     numOutputCols: Int,
     protobufQueryPlan: Array[Byte],
-    nativeMetrics: CometMetricNode)
+    nativeMetrics: CometMetricNode,
+    numParts: Int,
+    partitionIndex: Int)
     extends Iterator[ColumnarBatch] {
 
   private val nativeLib = new Native()
@@ -54,57 +60,31 @@ class CometExecIterator(
     new CometBatchIterator(iterator, nativeUtil)
   }.toArray
   private val plan = {
-    val configs = createNativeConf
     nativeLib.createPlan(
       id,
-      configs,
       cometBatchIterators,
       protobufQueryPlan,
       nativeMetrics,
-      new CometTaskMemoryManager(id))
+      new CometTaskMemoryManager(id),
+      batchSize = COMET_BATCH_SIZE.get(),
+      debug = COMET_DEBUG_ENABLED.get(),
+      explain = COMET_EXPLAIN_NATIVE_ENABLED.get(),
+      workerThreads = COMET_WORKER_THREADS.get(),
+      blockingThreads = COMET_BLOCKING_THREADS.get())
   }
 
   private var nextBatch: Option[ColumnarBatch] = None
   private var currentBatch: ColumnarBatch = null
   private var closed: Boolean = false
 
-  /**
-   * Creates a new configuration map to be passed to the native side.
-   */
-  private def createNativeConf: java.util.HashMap[String, String] = {
-    val result = new java.util.HashMap[String, String]()
-    val conf = SparkEnv.get.conf
-
-    val maxMemory = CometSparkSessionExtensions.getCometMemoryOverhead(conf)
-    // Only enable unified memory manager when off-heap mode is enabled. Otherwise,
-    // we'll use the built-in memory pool from DF, and initializes with `memory_limit`
-    // and `memory_fraction` below.
-    result.put(
-      "use_unified_memory_manager",
-      String.valueOf(conf.get("spark.memory.offHeap.enabled", "false")))
-    result.put("memory_limit", String.valueOf(maxMemory))
-    result.put("memory_fraction", String.valueOf(COMET_EXEC_MEMORY_FRACTION.get()))
-    result.put("batch_size", String.valueOf(COMET_BATCH_SIZE.get()))
-    result.put("debug_native", String.valueOf(COMET_DEBUG_ENABLED.get()))
-    result.put("explain_native", String.valueOf(COMET_EXPLAIN_NATIVE_ENABLED.get()))
-    result.put("worker_threads", String.valueOf(COMET_WORKER_THREADS.get()))
-    result.put("blocking_threads", String.valueOf(COMET_BLOCKING_THREADS.get()))
-
-    // Strip mandatory prefix spark. which is not required for DataFusion session params
-    conf.getAll.foreach {
-      case (k, v) if k.startsWith("spark.datafusion") =>
-        result.put(k.replaceFirst("spark\\.", ""), v)
-      case _ =>
-    }
-
-    result
-  }
-
   def getNextBatch(): Option[ColumnarBatch] = {
+    assert(partitionIndex >= 0 && partitionIndex < numParts)
+
     nativeUtil.getNextBatch(
       numOutputCols,
       (arrayAddrs, schemaAddrs) => {
-        nativeLib.executePlan(plan, arrayAddrs, schemaAddrs)
+        val ctx = TaskContext.get()
+        nativeLib.executePlan(ctx.stageId(), partitionIndex, plan, arrayAddrs, schemaAddrs)
       })
   }
 

@@ -361,14 +361,15 @@ class CometUDFSuite extends CometTestBase with AdaptiveSparkPlanHelper {
     val dfOrg = spark.read.parquet(
       "/Users/feng/github/datafusion-comet/spark-warehouse/simple_point_polygon_compacted_coalesced_100M")
     dfOrg.createOrReplaceTempView(table)
+    dfOrg.printSchema()
 
     val point = "st_point(ptx, pty)"
     val linestring = "st_linestring(ptx-10, pty-10, ptx+10, pty+10)"
-    val polygon = "st_polygon(ptx-10, pty-10, ptx+10, pty+10)"
-    val polygon2 = "st_polygon(eminx, eminy, emaxx, emaxy)"
+//    val polygon = "st_polygon(ptx-10, pty-10, ptx+10, pty+10)"
+//    val polygon2 = "st_polygon(eminx, eminy, emaxx, emaxy)"
 
-//    val polygon = "st_randompolygon(ptx, pty, CAST(1.0 AS DOUBLE), 8, cast (id as bigint))"
-//    val polygon2 = "st_randompolygon(ptx, pty, CAST(1.0 AS DOUBLE), 8, cast (id as bigint) + 1)"
+    val polygon = "st_randompolygon(ptx, pty, CAST(1.0 AS DOUBLE), 8, cast (id as bigint))"
+    val polygon2 = "st_randompolygon(ptx, pty, CAST(1.0 AS DOUBLE), 8, cast (id as bigint) + 1)"
 
     val df = sql(s"""
       SELECT id,

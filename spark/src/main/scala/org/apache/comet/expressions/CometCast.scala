@@ -70,9 +70,13 @@ object CometCast {
           case _ =>
             Unsupported
         }
-      case (_: DecimalType, _: DecimalType) =>
-        // https://github.com/apache/datafusion-comet/issues/375
-        Incompatible()
+      case (from: DecimalType, to: DecimalType) =>
+        if (to.precision < from.precision) {
+          // https://github.com/apache/datafusion/issues/13492
+          Incompatible(Some("Casting to smaller precision is not supported"))
+        } else {
+          Compatible()
+        }
       case (DataTypes.StringType, _) =>
         canCastFromString(toType, timeZoneId, evalMode)
       case (_, DataTypes.StringType) =>
@@ -95,6 +99,16 @@ object CometCast {
         canCastFromFloat(toType)
       case (DataTypes.DoubleType, _) =>
         canCastFromDouble(toType)
+      case (from_struct: StructType, to_struct: StructType) =>
+        from_struct.fields.zip(to_struct.fields).foreach { case (a, b) =>
+          isSupported(a.dataType, b.dataType, timeZoneId, evalMode) match {
+            case Compatible(_) =>
+            // all good
+            case other =>
+              return other
+          }
+        }
+        Compatible()
       case _ => Unsupported
     }
   }
